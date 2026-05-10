@@ -1,5 +1,4 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -43,12 +42,18 @@ export async function createApp() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else if (process.env.NODE_ENV === 'production') {
+    try {
+      const { createServer: createViteServer } = await import('vite');
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+      console.log('Vite middleware loaded');
+    } catch (e) {
+      console.log('Vite not found, skipping middleware (likely production)');
+    }
+  } else if (process.env.NODE_ENV === 'production' && process.env.VERCEL !== '1') {
     // Production setup for standard Node servers (Render, etc)
     const distPath = path.join(__dirname, 'dist');
     app.use(express.static(distPath));
@@ -61,11 +66,14 @@ export async function createApp() {
 }
 
 // For local development
-if (process.env.VERCEL !== '1' && (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('server.ts'))) {
+const isMainModule = import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('server.ts');
+if (process.env.VERCEL !== '1' && isMainModule) {
   createApp().then(app => {
     const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });
+  }).catch(err => {
+    console.error('Failed to start server:', err);
   });
 }
