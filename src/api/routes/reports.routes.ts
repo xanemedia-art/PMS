@@ -1,8 +1,8 @@
 import express from 'express';
-import { db } from '../../db';
-import { bookings, rooms, users, roomTypes, plans, invoices } from '../../db/schema';
+import { db } from '../../db/index.js';
+import { bookings, rooms, users, roomTypes, plans, invoices } from '../../db/schema.js';
 import { eq, and, sql, gte, lte } from 'drizzle-orm';
-import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware';
+import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 

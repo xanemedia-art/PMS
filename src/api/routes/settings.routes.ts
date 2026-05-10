@@ -1,9 +1,9 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { db } from '../../db';
-import { users, hotels, rooms, roomTypes, plans } from '../../db/schema';
+import { db } from '../../db/index.js';
+import { users, hotels, rooms, roomTypes, plans } from '../../db/schema.js';
 import { eq, and } from 'drizzle-orm';
-import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware';
+import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 

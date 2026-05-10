@@ -1,8 +1,8 @@
 import express from 'express';
-import { db } from '../../db';
-import { users, bookings } from '../../db/schema';
+import { db } from '../../db/index.js';
+import { users, bookings } from '../../db/schema.js';
 import { eq, and, sum, count } from 'drizzle-orm';
-import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware';
+import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 import bcrypt from 'bcryptjs';
 
 const router = express.Router();

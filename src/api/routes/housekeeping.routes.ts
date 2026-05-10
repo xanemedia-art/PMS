@@ -1,8 +1,8 @@
 import express from 'express';
-import { db } from '../../db';
-import { housekeepingTasks, rooms } from '../../db/schema';
+import { db } from '../../db/index.js';
+import { housekeepingTasks, rooms } from '../../db/schema.js';
 import { eq, and } from 'drizzle-orm';
-import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware';
+import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
 
