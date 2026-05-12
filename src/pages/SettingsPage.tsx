@@ -27,13 +27,23 @@ export default function SettingsPage() {
 
   // Dialog States for Inventory
   const [isRoomTypeDialogOpen, setIsRoomTypeDialogOpen] = useState(false);
-  const [roomTypeData, setRoomTypeData] = useState({ name: '', price: '', capacity: '' });
+  const [editingRoomTypeId, setEditingRoomTypeId] = useState<number | null>(null);
+  const [roomTypeData, setRoomTypeData] = useState({ 
+    name: '', 
+    price: '', 
+    capacity: '', 
+    imageUrl: '', 
+    images: [] as string[],
+    description: '',
+    amenities: '' // Comma separated for input
+  });
   
   const [isRoomDialogOpen, setIsRoomDialogOpen] = useState(false);
   const [roomData, setRoomData] = useState({ number: '', roomTypeId: '' });
 
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
   const [planData, setPlanData] = useState({ name: '', price: '' });
+  const [isUploading, setIsUploading] = useState(false);
 
   // --- QUERIES ---
 
@@ -153,18 +163,24 @@ export default function SettingsPage() {
 
   const createRoomTypeMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch('/api/rooms/types', {
-        method: 'POST',
+      const url = editingRoomTypeId ? `/api/rooms/types/${editingRoomTypeId}` : '/api/rooms/types';
+      const method = editingRoomTypeId ? 'PATCH' : 'POST';
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(data)
+        body: JSON.stringify({
+          ...data,
+          amenities: data.amenities.split(',').map((s: string) => s.trim()).filter(Boolean)
+        })
       });
-      if (!res.ok) throw new Error('Failed to create room type');
+      if (!res.ok) throw new Error('Failed to save room type');
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['roomTypes'] });
       setIsRoomTypeDialogOpen(false);
-      setRoomTypeData({ name: '', price: '', capacity: '' });
+      setEditingRoomTypeId(null);
+      setRoomTypeData({ name: '', price: '', capacity: '', imageUrl: '', images: [], description: '', amenities: '' });
     },
     onError: (err: any) => alert(err.message)
   });
@@ -204,6 +220,35 @@ export default function SettingsPage() {
     },
     onError: (err: any) => alert(err.message)
   });
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    const formData = new FormData();
+    formData.append('file', file);
+
+    try {
+      const res = await fetch('/api/upload', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body: formData
+      });
+      const data = await res.json();
+      if (data.url) {
+        setRoomTypeData(prev => ({ 
+          ...prev, 
+          imageUrl: prev.imageUrl || data.url, 
+          images: [...prev.images, data.url] 
+        }));
+      }
+    } catch (error) {
+      alert('Upload failed');
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const deleteItemMutation = useMutation({
     mutationFn: async ({ type, id }: { type: string; id: number }) => {
@@ -351,25 +396,50 @@ export default function SettingsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {roomTypes.length === 0 ? (
-                        <TableRow><TableCell colSpan={3} className="text-center py-4 text-slate-400">No room types defined</TableCell></TableRow>
-                      ) : roomTypes.map((type: any) => (
-                        <TableRow key={type.id}>
-                          <TableCell className="pl-6 font-medium">{type.name}</TableCell>
-                          <TableCell>₹{type.price}</TableCell>
-                          <TableCell className="text-right pr-6">
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="text-red-500 hover:text-red-600 h-8 w-8" 
-                              onClick={() => deleteItemMutation.mutate({ type: 'room-types', id: type.id })}
-                              disabled={deleteItemMutation.isPending}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
+                        {!Array.isArray(roomTypes) || roomTypes.length === 0 ? (
+                          <TableRow><TableCell colSpan={4} className="text-center py-4 text-slate-400">No room types defined</TableCell></TableRow>
+                        ) : roomTypes.map((type: any) => (
+                          <TableRow key={type.id}>
+                            <TableCell className="pl-6 font-medium">
+                              <div className="flex items-center gap-3">
+                                {type.imageUrl && <img src={type.imageUrl} className="w-8 h-8 rounded object-cover shadow-sm" />}
+                                {type.name}
+                              </div>
+                            </TableCell>
+                            <TableCell>₹{type.price}</TableCell>
+                            <TableCell className="text-right pr-6 flex justify-end gap-2">
+                              <Button 
+                                variant="ghost" 
+                                size="sm"
+                                className="h-8 text-blue-500 hover:text-blue-600"
+                                onClick={() => {
+                                  setEditingRoomTypeId(type.id);
+                                  setRoomTypeData({
+                                    name: type.name,
+                                    price: type.price.toString(),
+                                    capacity: type.capacity.toString(),
+                                    imageUrl: type.imageUrl || '',
+                                    images: (() => { try { return type.images ? JSON.parse(type.images) : []; } catch { return []; } })(),
+                                    description: type.description || '',
+                                    amenities: (() => { try { return type.amenities ? JSON.parse(type.amenities).join(', ') : ''; } catch { return ''; } })()
+                                  });
+                                  setIsRoomTypeDialogOpen(true);
+                                }}
+                              >
+                                Edit
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="text-red-500 hover:text-red-600 h-8 w-8" 
+                                onClick={() => deleteItemMutation.mutate({ type: 'room-types', id: type.id })}
+                                disabled={deleteItemMutation.isPending}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
                     </TableBody>
                   </Table>
                 </div>
@@ -395,7 +465,7 @@ export default function SettingsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {rooms.length === 0 ? (
+                      {!Array.isArray(rooms) || rooms.length === 0 ? (
                         <TableRow><TableCell colSpan={3} className="text-center py-4 text-slate-400">No rooms added</TableCell></TableRow>
                       ) : rooms.map((room: any) => (
                         <TableRow key={room.id}>
@@ -440,7 +510,7 @@ export default function SettingsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {plans.length === 0 ? (
+                    {!Array.isArray(plans) || plans.length === 0 ? (
                       <TableRow><TableCell colSpan={3} className="text-center py-4 text-slate-400">No meal plans found</TableCell></TableRow>
                     ) : plans.map((plan: any) => (
                       <TableRow key={plan.id}>
@@ -490,7 +560,7 @@ export default function SettingsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {team.map((member: any) => (member.id !== user?.id) && (
+                    {Array.isArray(team) && team.map((member: any) => (member.id !== user?.id) && (
                       <TableRow key={member.id}>
                         <TableCell className="pl-6">
                           <div className="flex flex-col">
@@ -586,39 +656,117 @@ export default function SettingsPage() {
         </DialogContent>
       </Dialog>
 
-      {/* ADD ROOM TYPE DIALOG */}
-      <Dialog open={isRoomTypeDialogOpen} onOpenChange={setIsRoomTypeDialogOpen}>
-        <DialogContent>
+      {/* ADD/EDIT ROOM TYPE DIALOG */}
+      <Dialog open={isRoomTypeDialogOpen} onOpenChange={(open) => {
+        setIsRoomTypeDialogOpen(open);
+        if (!open) {
+          setEditingRoomTypeId(null);
+          setRoomTypeData({ name: '', price: '', capacity: '', imageUrl: '', images: [], description: '', amenities: '' });
+        }
+      }}>
+        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Add Room Type</DialogTitle>
-            <DialogDescription>Define a new category of rooms.</DialogDescription>
+            <DialogTitle>{editingRoomTypeId ? 'Edit Room Type' : 'Add Room Type'}</DialogTitle>
+            <DialogDescription>Define the features and pricing for this category.</DialogDescription>
           </DialogHeader>
           <form onSubmit={(e) => { 
             e.preventDefault(); 
-            createRoomTypeMutation.mutate({
-              name: roomTypeData.name,
-              price: parseFloat(roomTypeData.price),
-              capacity: parseInt(roomTypeData.capacity)
-            }); 
-          }} className="space-y-4 py-4">
+            createRoomTypeMutation.mutate(roomTypeData); 
+          }} className="space-y-6 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Room Type Name</Label>
+                <Input placeholder="e.g. Deluxe Suite" value={roomTypeData.name} onChange={e => setRoomTypeData({...roomTypeData, name: e.target.value})} required />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-2">
+                  <Label>Base Rate (₹)</Label>
+                  <Input type="number" value={roomTypeData.price} onChange={e => setRoomTypeData({...roomTypeData, price: e.target.value})} required />
+                </div>
+                <div className="space-y-2">
+                  <Label>Capacity</Label>
+                  <Input type="number" value={roomTypeData.capacity} onChange={e => setRoomTypeData({...roomTypeData, capacity: e.target.value})} required />
+                </div>
+              </div>
+            </div>
+
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input placeholder="e.g. Deluxe Suite" value={roomTypeData.name} onChange={e => setRoomTypeData({...roomTypeData, name: e.target.value})} required />
+              <Label>Description</Label>
+              <textarea 
+                className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Describe the room features..."
+                value={roomTypeData.description}
+                onChange={e => setRoomTypeData({...roomTypeData, description: e.target.value})}
+              />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Base Rate (₹)</Label>
-                <Input type="number" placeholder="150" value={roomTypeData.price} onChange={e => setRoomTypeData({...roomTypeData, price: e.target.value})} required />
+
+            <div className="space-y-2">
+              <Label>Amenities (Comma separated)</Label>
+              <Input 
+                placeholder="WiFi, AC, Minibar, Smart TV" 
+                value={roomTypeData.amenities}
+                onChange={e => setRoomTypeData({...roomTypeData, amenities: e.target.value})}
+              />
+            </div>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label>Room Gallery (Multiple Images)</Label>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => document.getElementById('room-gallery-upload')?.click()}
+                  disabled={isUploading}
+                >
+                  {isUploading ? 'Uploading...' : 'Add Image'}
+                </Button>
+                <input 
+                  type="file" 
+                  className="hidden" 
+                  id="room-gallery-upload" 
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                />
               </div>
-              <div className="space-y-2">
-                <Label>Capacity</Label>
-                <Input type="number" placeholder="2" value={roomTypeData.capacity} onChange={e => setRoomTypeData({...roomTypeData, capacity: e.target.value})} required />
+              
+              <div className="grid grid-cols-4 gap-3">
+                {roomTypeData.images.map((img, idx) => (
+                  <div key={idx} className="relative aspect-square rounded-lg border overflow-hidden group">
+                    <img src={img} className="w-full h-full object-cover" />
+                    <button 
+                      type="button"
+                      onClick={() => setRoomTypeData(prev => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }))}
+                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                    {idx === 0 && <div className="absolute bottom-0 left-0 right-0 bg-blue-600 text-[8px] text-white text-center py-0.5 font-bold uppercase">Main</div>}
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                 <Input 
+                   placeholder="Or paste external image URL" 
+                   className="flex-1"
+                   onKeyDown={(e) => {
+                     if (e.key === 'Enter') {
+                       e.preventDefault();
+                       const val = (e.target as HTMLInputElement).value;
+                       if (val) {
+                         setRoomTypeData(prev => ({ ...prev, images: [...prev.images, val], imageUrl: prev.imageUrl || val }));
+                         (e.target as HTMLInputElement).value = '';
+                       }
+                     }
+                   }}
+                 />
               </div>
             </div>
+
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsRoomTypeDialogOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={createRoomTypeMutation.isPending}>
-                {createRoomTypeMutation.isPending ? 'Adding...' : 'Add Room Type'}
+                {createRoomTypeMutation.isPending ? 'Saving...' : editingRoomTypeId ? 'Update Room Type' : 'Add Room Type'}
               </Button>
             </DialogFooter>
           </form>

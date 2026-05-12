@@ -22,21 +22,23 @@ async function seed() {
 
     // Insert Hotel
     const newHotel = await db.insert(schema.hotels).values({
-      name: 'Grand Xane Resort',
-      address: '123 Ocean Drive, Paradise City',
+      name: process.env.HOTEL_NAME || 'New Hotel',
+      address: process.env.HOTEL_ADDRESS || 'Hotel Address',
     }).returning();
     
     const hotelId = newHotel[0].id;
 
     // Insert Users
-    const adminPasswordHash = await bcrypt.hash('admin123', 10);
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@hotel.com';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    const adminPasswordHash = await bcrypt.hash(adminPassword, 10);
     const agentPasswordHash = await bcrypt.hash('agent123', 10);
 
     const users = await db.insert(schema.users).values([
       {
         hotelId,
         name: 'Admin User',
-        email: 'admin@hotel.com',
+        email: adminEmail,
         passwordHash: adminPasswordHash,
         role: 'admin',
       },

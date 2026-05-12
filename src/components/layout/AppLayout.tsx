@@ -14,8 +14,13 @@ export default function AppLayout() {
   };
 
   const navItems = [
-    { name: 'Dashboard', path: '/', icon: LayoutDashboard, roles: ['admin', 'manager', 'staff'] },
-    { name: 'Bookings', path: '/bookings', icon: CalendarDays, roles: ['admin', 'manager', 'staff', 'agent'] },
+    { name: 'Dashboard', path: '/dashboard', icon: LayoutDashboard, roles: ['admin', 'manager', 'staff'] },
+    { 
+      name: user?.role === 'agent' ? 'Agent Portal' : 'Bookings', 
+      path: user?.role === 'agent' ? '/agent' : '/bookings', 
+      icon: CalendarDays, 
+      roles: ['admin', 'manager', 'staff', 'agent'] 
+    },
     { name: 'Rooms', path: '/rooms', icon: BedDouble, roles: ['admin', 'manager', 'staff'] },
     { name: 'Housekeeping', path: '/housekeeping', icon: UserRoundCog, roles: ['admin', 'manager', 'staff'] },
     { name: 'Agents', path: '/agents', icon: Users, roles: ['admin', 'manager'] },
@@ -89,7 +94,7 @@ export default function AppLayout() {
             <Menu className="w-6 h-6" />
           </button>
           <h2 className="text-xl font-semibold tracking-tight text-gray-800 truncate">
-            Workspace
+            {user?.role === 'agent' ? 'Agent Workspace' : 'Admin Workspace'}
           </h2>
         </header>
 

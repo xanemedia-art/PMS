@@ -25,15 +25,21 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+import LandingPage from './pages/LandingPage';
+import BookingEnginePage from './pages/BookingEnginePage';
+
 function MainRoutes() {
-  const { user } = useAuth();
+  const { user, isAuthenticated } = useAuth();
   
   return (
     <Routes>
-      <Route path="/login" element={<LoginPage />} />
+      <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
+      <Route path="/book/:hotelId" element={<BookingEnginePage />} />
+      <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
       
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
-        <Route path="/" element={user?.role === 'agent' ? <Navigate to="/bookings" replace /> : <DashboardPage />} />
+        <Route path="/dashboard" element={user?.role === 'agent' ? <Navigate to="/agent" replace /> : <DashboardPage />} />
+        <Route path="/agent" element={<BookingsPage />} />
         <Route path="/bookings" element={<BookingsPage />} />
         <Route path="/rooms" element={<RoomsPage />} />
         <Route path="/plans" element={<PlansPage />} />

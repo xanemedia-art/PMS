@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { bookings, rooms, housekeepingTasks, users } from '../../db/schema.js';
+import { bookings, rooms, housekeepingTasks, users, plans } from '../../db/schema.js';
 import { eq, and, gte, lte, lt, gt, ne } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
@@ -29,20 +29,27 @@ router.get('/', async (req: AuthRequest, res) => {
       bookedById: bookings.bookedById,
       guestName: bookings.guestName,
       guestEmail: bookings.guestEmail,
+      guestPhone: bookings.guestPhone,
       checkInDate: bookings.checkInDate,
       checkOutDate: bookings.checkOutDate,
       status: bookings.status,
       agentCommission: bookings.agentCommission,
+      notes: bookings.notes,
+      extraBeddings: bookings.extraBeddings,
       createdAt: bookings.createdAt,
       bookedBy: {
         name: users.name,
         role: users.role
+      },
+      plan: {
+        name: plans.name
       },
       roomNumber: rooms.number
     })
     .from(bookings)
     .leftJoin(users, eq(bookings.bookedById, users.id))
     .leftJoin(rooms, eq(bookings.roomId, rooms.id))
+    .leftJoin(plans, eq(bookings.planId, plans.id))
     .where(queryConditions);
     
     // Obscure sensitive data for agents looking at other people's bookings
@@ -71,7 +78,7 @@ router.post('/', async (req: AuthRequest, res) => {
     const hotelId = req.user!.hotelId;
     const bookedById = req.user!.userId;
     const userRole = req.user!.role;
-    const { roomId, roomTypeId, roomCount, roomConfigs, planId, guestName, guestEmail, checkInDate, checkOutDate, agentCommission } = req.body;
+    const { roomId, roomTypeId, roomCount, roomConfigs, planId, guestName, guestEmail, guestPhone, checkInDate, checkOutDate, agentCommission } = req.body;
 
     const normalizedCheckIn = new Date(checkInDate).toISOString().split('T')[0];
     const normalizedCheckOut = new Date(checkOutDate).toISOString().split('T')[0];
@@ -89,6 +96,7 @@ router.post('/', async (req: AuthRequest, res) => {
           eq(bookings.roomId, parseInt(roomId)),
           eq(bookings.hotelId, hotelId),
           ne(bookings.status, 'cancelled'),
+          ne(bookings.status, 'pending'),
           lt(bookings.checkInDate, normalizedCheckOut),
           gt(bookings.checkOutDate, normalizedCheckIn)
         )
@@ -125,6 +133,7 @@ router.post('/', async (req: AuthRequest, res) => {
             eq(bookings.hotelId, hotelId),
             ne(bookings.status, 'cancelled'),
             ne(bookings.status, 'checked_out'),
+            ne(bookings.status, 'pending'),
             lt(bookings.checkInDate, normalizedCheckOut),
             gt(bookings.checkOutDate, normalizedCheckIn)
           )
@@ -180,6 +189,7 @@ router.post('/', async (req: AuthRequest, res) => {
           bookedById,
           guestName: numRooms > 1 ? `${guestName} (Room ${i + 1}/${numRooms})` : guestName,
           guestEmail,
+          guestPhone,
           checkInDate: normalizedCheckIn,
           checkOutDate: normalizedCheckOut,
           agentCommission: userRole === 'agent' ? agentCommission : null,
@@ -255,6 +265,7 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
                 eq(bookings.hotelId, hotelId),
                 ne(bookings.status, 'cancelled'),
                 ne(bookings.status, 'checked_out'),
+                ne(bookings.status, 'pending'),
                 lt(bookings.checkInDate, b.checkOutDate),
                 gt(bookings.checkOutDate, b.checkInDate),
                 ne(bookings.id, id)

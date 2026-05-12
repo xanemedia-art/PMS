@@ -29,6 +29,10 @@ export const roomTypes = pgTable('room_types', {
   name: text('name').notNull(),
   price: real('price').notNull(),
   capacity: integer('capacity').notNull(),
+  imageUrl: text('image_url'),
+  images: text('images'), // JSON array of strings
+  description: text('description'),
+  amenities: text('amenities'), // JSON array of strings
 });
 
 // 4. Rooms (Individual units)
@@ -61,6 +65,7 @@ export const bookings = pgTable('bookings', {
   bookedById: integer('booked_by_id').references(() => users.id), // Who made the booking (Agent/Staff/Admin)
   guestName: text('guest_name').notNull(),
   guestEmail: text('guest_email'),
+  guestPhone: text('guest_phone'),
   checkInDate: text('check_in_date').notNull(),
   checkOutDate: text('check_out_date').notNull(),
   status: text('status', { enum: ['pending', 'confirmed', 'checked_in', 'checked_out', 'cancelled'] }).default('pending'),

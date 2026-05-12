@@ -21,7 +21,11 @@ router.get('/', async (req: AuthRequest, res) => {
       roomType: roomTypes.name,
       price: roomTypes.price,
       capacity: roomTypes.capacity,
-      roomTypeId: roomTypes.id
+      roomTypeId: roomTypes.id,
+      imageUrl: roomTypes.imageUrl,
+      images: roomTypes.images,
+      description: roomTypes.description,
+      amenities: roomTypes.amenities
     }).from(rooms)
       .leftJoin(roomTypes, eq(rooms.roomTypeId, roomTypes.id))
       .where(eq(rooms.hotelId, hotelId));
@@ -47,19 +51,55 @@ router.get('/types', async (req: AuthRequest, res) => {
 router.post('/types', requireRole(['admin', 'manager']), async (req: AuthRequest, res) => {
   try {
     const hotelId = req.user!.hotelId;
-    const { name, price, capacity } = req.body;
+    const { name, price, capacity, imageUrl, images, description, amenities } = req.body;
 
     const newType = await db.insert(roomTypes).values({
       hotelId,
       name,
       price,
-      capacity
+      capacity,
+      imageUrl,
+      images: images ? JSON.stringify(images) : null,
+      description,
+      amenities: amenities ? JSON.stringify(amenities) : null
     }).returning();
 
     res.json(newType[0]);
   } catch (error) {
     console.error('Create room type error:', error);
     res.status(500).json({ error: 'Failed to create room type' });
+  }
+});
+
+// Update room type (Admin/Manager only)
+router.patch('/types/:id', requireRole(['admin', 'manager']), async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+    const { name, price, capacity, imageUrl, images, description, amenities } = req.body;
+
+    const updated = await db.update(roomTypes)
+      .set({
+        name,
+        price,
+        capacity,
+        imageUrl,
+        images: images ? JSON.stringify(images) : undefined,
+        description,
+        amenities: amenities ? JSON.stringify(amenities) : undefined
+      })
+      .where(and(eq(roomTypes.id, id), eq(roomTypes.hotelId, hotelId)))
+      .returning();
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: 'Room type not found' });
+      return;
+    }
+
+    res.json(updated[0]);
+  } catch (error) {
+    console.error('Update room type error:', error);
+    res.status(500).json({ error: 'Failed to update room type' });
   }
 });
 

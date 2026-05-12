@@ -13,10 +13,32 @@ import agentsRoutes from './src/api/routes/agents.routes.js';
 import plansRoutes from './src/api/routes/plans.routes.js';
 import expensesRoutes from './src/api/routes/expenses.routes.js';
 import settingsRoutes from './src/api/routes/settings.routes.js';
+import publicRoutes from './src/api/routes/public.routes.js';
+
+import multer from 'multer';
+import fs from 'fs';
 
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Ensure uploads directory exists
+const uploadDir = path.join(__dirname, 'public', 'uploads');
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
+
+// Multer config
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage });
 
 export async function createApp() {
   const app = express();
@@ -24,6 +46,16 @@ export async function createApp() {
   // Middleware
   app.use(cors());
   app.use(express.json());
+  app.use('/uploads', express.static(uploadDir));
+
+  // File Upload API
+  app.post('/api/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+    const fileUrl = `/uploads/${req.file.filename}`;
+    res.json({ url: fileUrl });
+  });
 
   // API Routes
   app.get('/api/health', (req, res) => {
@@ -39,6 +71,7 @@ export async function createApp() {
   app.use('/api/plans', plansRoutes);
   app.use('/api/expenses', expensesRoutes);
   app.use('/api/settings', settingsRoutes);
+  app.use('/api/public', publicRoutes);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1') {
@@ -66,10 +99,9 @@ export async function createApp() {
 }
 
 // For local development
-const isMainModule = import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('server.ts');
-if (process.env.VERCEL !== '1' && isMainModule) {
+if (process.env.VERCEL !== '1') {
   createApp().then(app => {
-    const PORT = process.env.PORT || 3000;
+    const PORT = Number(process.env.PORT || 3000);
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on http://localhost:${PORT}`);
     });

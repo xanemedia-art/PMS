@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight, User, Users, Coffee } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function BookingsPage() {
@@ -32,7 +32,8 @@ export default function BookingsPage() {
       if (!res.ok) throw new Error('Failed to fetch bookings');
       return res.json();
     },
-    staleTime: 30000,
+    staleTime: 5000,
+    refetchInterval: 10000, // Sync every 10 seconds
   });
 
   const { data: rooms = [], isLoading: roomsLoading } = useQuery({
@@ -42,7 +43,8 @@ export default function BookingsPage() {
       if (!res.ok) throw new Error('Failed to fetch rooms');
       return res.json();
     },
-    staleTime: 60000,
+    staleTime: 10000,
+    refetchInterval: 30000, // Sync rooms every 30 seconds
   });
 
   const { data: plans = [], isLoading: plansLoading } = useQuery({
@@ -52,7 +54,8 @@ export default function BookingsPage() {
       if (!res.ok) throw new Error('Failed to fetch plans');
       return res.json();
     },
-    staleTime: 300000,
+    staleTime: 30000,
+    refetchInterval: 60000, // Sync plans every minute
   });
 
   const loading = bookingsLoading || roomsLoading || plansLoading;
@@ -102,6 +105,7 @@ export default function BookingsPage() {
   const [formData, setFormData] = useState({
     guestName: '',
     guestEmail: '',
+    guestPhone: '',
     roomTypeId: '',
     roomCount: '1',
     roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }],
@@ -126,7 +130,16 @@ export default function BookingsPage() {
     const map: any = {};
     rooms.forEach((r: any) => {
       if (r.roomTypeId && !map[r.roomTypeId]) {
-        map[r.roomTypeId] = { id: r.roomTypeId, name: r.roomType?.name || r.roomType || 'Unknown', price: r.price };
+        map[r.roomTypeId] = { 
+          id: r.roomTypeId, 
+          name: r.roomType?.name || r.roomType || 'Unknown', 
+          price: r.price,
+          capacity: r.capacity || 2,
+          imageUrl: r.imageUrl,
+          images: (() => { try { return r.images ? JSON.parse(r.images) : []; } catch { return []; } })(),
+          description: r.description || '',
+          amenities: (() => { try { return r.amenities ? JSON.parse(r.amenities) : []; } catch { return []; } })()
+        };
       }
     });
     return Object.values(map);
@@ -154,7 +167,7 @@ export default function BookingsPage() {
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
       setIsDialogOpen(false);
       setFormData({
-        guestName: '', guestEmail: '', roomTypeId: '', roomCount: '1', roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }], planId: '', checkInDate: '', checkOutDate: '', agentCommission: ''
+        guestName: '', guestEmail: '', guestPhone: '', roomTypeId: '', roomCount: '1', roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }], planId: '', checkInDate: '', checkOutDate: '', agentCommission: ''
       });
     },
     onError: (err: any) => alert(err.message)
@@ -240,13 +253,14 @@ export default function BookingsPage() {
 
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger render={<Button>New Booking</Button>} />
-            <DialogContent className="sm:max-w-[600px] max-h-[85vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Create New Booking</DialogTitle>
-                <DialogDescription>
-                  Enter the booking details below. Click save when you're done.
+            <DialogContent className="sm:max-w-[700px] max-h-[90vh] overflow-y-auto p-0 border-none shadow-2xl">
+              <div className="bg-slate-900 px-8 py-6">
+                <DialogTitle className="text-2xl font-bold text-white">New Reservation</DialogTitle>
+                <DialogDescription className="text-slate-400 mt-1">
+                  Secure a new stay for your guest. Complete all fields below.
                 </DialogDescription>
-              </DialogHeader>
+              </div>
+              
               <form onSubmit={(e) => {
                 e.preventDefault();
                 createBookingMutation.mutate({
@@ -257,87 +271,105 @@ export default function BookingsPage() {
                   planId: formData.planId ? parseInt(formData.planId) : null,
                   agentCommission: formData.agentCommission ? parseFloat(formData.agentCommission) : null
                 });
-              }}>
-                <div className="grid gap-4 py-4">
-                  
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="guestName" className="font-medium text-sm text-slate-700">Guest Name</Label>
-                      <Input
-                        id="guestName"
-                        placeholder="John Doe"
-                        value={formData.guestName}
-                        onChange={(e) => setFormData({ ...formData, guestName: e.target.value })}
-                        required
-                      />
+              }} className="px-8 py-6 space-y-8 bg-white">
+                
+                {/* Section: Guest Information */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                    <User className="w-5 h-5 text-blue-500" />
+                    <h3 className="font-bold text-slate-800">Guest Information</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="guestName" className="text-xs font-bold uppercase tracking-wider text-slate-400">Guest Name</Label>
+                      <Input id="guestName" placeholder="Full Name" value={formData.guestName} onChange={(e) => setFormData({ ...formData, guestName: e.target.value })} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="guestEmail" className="font-medium text-sm text-slate-700">Email Address</Label>
-                      <Input
-                        id="guestEmail"
-                        type="email"
-                        placeholder="guest@example.com"
-                        value={formData.guestEmail}
-                        onChange={(e) => setFormData({ ...formData, guestEmail: e.target.value })}
-                      />
+                    <div className="space-y-1.5">
+                      <Label htmlFor="guestEmail" className="text-xs font-bold uppercase tracking-wider text-slate-400">Email Address</Label>
+                      <Input id="guestEmail" type="email" placeholder="email@example.com" value={formData.guestEmail} onChange={(e) => setFormData({ ...formData, guestEmail: e.target.value })} className="bg-slate-50 border-none focus-visible:ring-blue-500" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="guestPhone" className="text-xs font-bold uppercase tracking-wider text-slate-400">Phone Number</Label>
+                      <Input id="guestPhone" placeholder="+91 ..." value={formData.guestPhone} onChange={(e) => setFormData({ ...formData, guestPhone: e.target.value })} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
                     </div>
                   </div>
+                </div>
 
+                {/* Section: Stay Details */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                    <CalendarDays className="w-5 h-5 text-blue-500" />
+                    <h3 className="font-bold text-slate-800">Stay Details</h3>
+                  </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="roomTypeId" className="font-medium text-sm text-slate-700">Room Type</Label>
-                      <select
-                        id="roomTypeId"
-                        className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                        value={formData.roomTypeId}
-                        onChange={(e) => setFormData({ ...formData, roomTypeId: e.target.value })}
-                        required
-                      >
-                        <option value="" disabled>Select a room type</option>
-                        {uniqueRoomTypes.map((type: any) => (
-                          <option key={type.id} value={type.id}>
-                            {type.name} (₹{Number(type.price || 0).toFixed(0)}/n)
-                          </option>
-                        ))}
+                    <div className="space-y-1.5">
+                      <Label htmlFor="checkIn" className="text-xs font-bold uppercase tracking-wider text-slate-400">Check-In</Label>
+                      <Input id="checkIn" type="date" value={formData.checkInDate} onChange={(e) => setFormData({ ...formData, checkInDate: e.target.value })} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="checkOut" className="text-xs font-bold uppercase tracking-wider text-slate-400">Check-Out</Label>
+                      <Input id="checkOut" type="date" value={formData.checkOutDate} onChange={(e) => setFormData({ ...formData, checkOutDate: e.target.value })} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section: Room & Plan */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                    <BedDouble className="w-5 h-5 text-blue-500" />
+                    <h3 className="font-bold text-slate-800">Room & Inventory</h3>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="sm:col-span-1 space-y-1.5">
+                      <Label htmlFor="roomTypeId" className="text-xs font-bold uppercase tracking-wider text-slate-400">Category</Label>
+                      <select id="roomTypeId" value={formData.roomTypeId} onChange={(e) => setFormData({ ...formData, roomTypeId: e.target.value })} required className="flex h-10 w-full rounded-md border-none bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="" disabled>Select Type</option>
+                        {uniqueRoomTypes.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
                       </select>
                     </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="roomCount" className="font-medium text-sm text-slate-700">Number of Rooms</Label>
-                      <Input
-                        id="roomCount"
-                        type="number"
-                        min="1"
-                        value={formData.roomCount}
-                        onChange={handleRoomCountChange}
-                        required
-                      />
+                    <div className="space-y-1.5">
+                      <Label htmlFor="roomCount" className="text-xs font-bold uppercase tracking-wider text-slate-400">No. Rooms</Label>
+                      <Input id="roomCount" type="number" min="1" value={formData.roomCount} onChange={handleRoomCountChange} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="planId" className="text-xs font-bold uppercase tracking-wider text-slate-400">Rate Plan</Label>
+                      <select id="planId" value={formData.planId} onChange={(e) => setFormData({ ...formData, planId: e.target.value })} className="flex h-10 w-full rounded-md border-none bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                        <option value="">Standard</option>
+                        {plans.map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
+                      </select>
                     </div>
                   </div>
+                </div>
 
+                {/* Room Configurations (Dynamic) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {formData.roomConfigs.map((config, index) => (
-                    <div key={index} className="bg-slate-50 p-4 rounded-md border border-slate-200 space-y-3">
-                      <h4 className="text-sm font-semibold text-slate-700">Room {index + 1} Configuration</h4>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label className="font-medium text-sm text-slate-700">Guests (PAX)</Label>
-                          <Input type="number" min="1" className="h-8 text-sm" value={config.pax} onChange={e => {
+                    <div key={index} className="bg-blue-50/50 p-4 rounded-xl border border-blue-100/50 space-y-3">
+                      <div className="flex justify-between items-center mb-1">
+                         <h4 className="text-xs font-black uppercase text-blue-600">Room #{index + 1}</h4>
+                         <Users size={14} className="text-blue-300" />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-slate-400 uppercase">PAX</Label>
+                          <Input type="number" min="1" className="h-8 text-xs bg-white border-none shadow-sm" value={config.pax} onChange={e => {
                             const newConfigs = [...formData.roomConfigs];
                             newConfigs[index].pax = parseInt(e.target.value) || 1;
                             setFormData({ ...formData, roomConfigs: newConfigs });
                           }} required />
                         </div>
-                        <div className="space-y-2">
-                          <Label className="font-medium text-sm text-slate-700">Extra Beds</Label>
-                          <Input type="number" min="0" className="h-8 text-sm" value={config.extraBeddings} onChange={e => {
+                        <div className="space-y-1">
+                          <Label className="text-[10px] font-bold text-slate-400 uppercase">Extra Beds</Label>
+                          <Input type="number" min="0" className="h-8 text-xs bg-white border-none shadow-sm" value={config.extraBeddings} onChange={e => {
                             const newConfigs = [...formData.roomConfigs];
                             newConfigs[index].extraBeddings = parseInt(e.target.value) || 0;
                             setFormData({ ...formData, roomConfigs: newConfigs });
                           }} required />
                         </div>
                       </div>
-                      <div className="space-y-2">
-                        <Label className="font-medium text-sm text-slate-700">Special Notes / Requests</Label>
-                        <Input type="text" placeholder="e.g. Needs a crib, accessible room, etc." className="h-8 text-sm" value={config.notes} onChange={e => {
+                      <div className="space-y-1">
+                        <Label className="text-[10px] font-bold text-slate-400 uppercase">Special Request</Label>
+                        <Input type="text" placeholder="e.g. Near Elevator" className="h-8 text-xs bg-white border-none shadow-sm" value={config.notes} onChange={e => {
                           const newConfigs = [...formData.roomConfigs];
                           newConfigs[index].notes = e.target.value;
                           setFormData({ ...formData, roomConfigs: newConfigs });
@@ -345,79 +377,121 @@ export default function BookingsPage() {
                       </div>
                     </div>
                   ))}
-
-                  <div className="space-y-2">
-                    <Label htmlFor="planId" className="font-medium text-sm text-slate-700">Room Plan / Package</Label>
-                    <select
-                      id="planId"
-                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-                      value={formData.planId}
-                      onChange={(e) => setFormData({ ...formData, planId: e.target.value })}
-                    >
-                      <option value="">No Plan (Standard Rate)</option>
-                      {plans.map((plan: any) => (
-                        <option key={plan.id} value={plan.id}>
-                          {plan.name} ({plan.priceMultiplier}x)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="checkIn" className="font-medium text-sm text-slate-700">Check In Date</Label>
-                      <Input
-                        id="checkIn"
-                        type="date"
-                        value={formData.checkInDate}
-                        onChange={(e) => setFormData({ ...formData, checkInDate: e.target.value })}
-                        required
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="checkOut" className="font-medium text-sm text-slate-700">Check Out Date</Label>
-                      <Input
-                        id="checkOut"
-                        type="date"
-                        value={formData.checkOutDate}
-                        onChange={(e) => setFormData({ ...formData, checkOutDate: e.target.value })}
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  {user?.role === 'agent' && (
-                    <div className="space-y-2">
-                      <Label htmlFor="commission" className="font-medium text-sm text-slate-700">Expected Commission (₹)</Label>
-                      <Input
-                        id="commission"
-                        type="number"
-                        placeholder="e.g. 50"
-                        value={formData.agentCommission}
-                        onChange={(e) => setFormData({ ...formData, agentCommission: e.target.value })}
-                        required
-                      />
-                    </div>
-                  )}
-
                 </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
-                  <Button type="submit" disabled={createBookingMutation.isPending}>
-                    {createBookingMutation.isPending ? 'Creating...' : 'Create Booking'}
+
+                {user?.role === 'agent' && (
+                  <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 space-y-2">
+                    <Label htmlFor="commission" className="text-xs font-bold uppercase tracking-wider text-amber-600">Agent Commission (₹)</Label>
+                    <Input id="commission" type="number" placeholder="Enter amount" value={formData.agentCommission} onChange={(e) => setFormData({ ...formData, agentCommission: e.target.value })} required className="bg-white border-none focus-visible:ring-amber-500" />
+                  </div>
+                )}
+
+                <div className="flex gap-3 pt-4">
+                  <Button type="button" variant="ghost" onClick={() => setIsDialogOpen(false)} className="flex-1 text-slate-400 hover:text-slate-600">Discard</Button>
+                  <Button type="submit" disabled={createBookingMutation.isPending} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-12 rounded-xl shadow-lg shadow-blue-200">
+                    {createBookingMutation.isPending ? 'Processing...' : 'Confirm Reservation'}
                   </Button>
-                </DialogFooter>
+                </div>
               </form>
             </DialogContent>
           </Dialog>
         </div>
       </div>
 
-      <Tabs defaultValue={user?.role === 'agent' ? 'list' : 'list'} className="w-full">
+
+      <Tabs defaultValue={user?.role === 'agent' ? 'inventory' : 'list'} className="w-full">
         <TabsList className="mb-4">
+          {user?.role === 'agent' && <TabsTrigger value="inventory">Room Inventory</TabsTrigger>}
           <TabsTrigger value="list">List View</TabsTrigger>
           <TabsTrigger value="availability">Room Availability</TabsTrigger>
         </TabsList>
+
+        {user?.role === 'agent' && (
+          <TabsContent value="inventory" className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {/* Agent Search Header */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100 flex flex-col md:flex-row items-end gap-4">
+               <div className="flex-1 space-y-2">
+                  <Label className="text-[10px] uppercase font-black text-slate-400 ml-1 tracking-widest">Check-In</Label>
+                  <div className="relative">
+                    <CalendarDays className="absolute left-3 top-2.5 w-4 h-4 text-blue-500" />
+                    <Input type="date" value={formData.checkInDate} onChange={e => setFormData({...formData, checkInDate: e.target.value})} className="pl-10 bg-slate-50 border-none h-11 rounded-xl" />
+                  </div>
+               </div>
+               <div className="flex-1 space-y-2">
+                  <Label className="text-[10px] uppercase font-black text-slate-400 ml-1 tracking-widest">Check-Out</Label>
+                  <div className="relative">
+                    <CalendarDays className="absolute left-3 top-2.5 w-4 h-4 text-blue-500" />
+                    <Input type="date" value={formData.checkOutDate} onChange={e => setFormData({...formData, checkOutDate: e.target.value})} className="pl-10 bg-slate-50 border-none h-11 rounded-xl" />
+                  </div>
+               </div>
+               <Button className="h-11 px-8 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold shadow-lg shadow-blue-200">
+                  Update Availability
+               </Button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+              {uniqueRoomTypes.map((type: any) => (
+                <div key={type.id} className="group relative bg-white rounded-[2.5rem] overflow-hidden border border-slate-100 shadow-sm hover:shadow-2xl hover:-translate-y-2 transition-all duration-500">
+                  <div className="relative h-64 overflow-hidden">
+                    <img 
+                      src={type.imageUrl || (type.images?.[0]) || "https://images.unsplash.com/photo-1590490360182-c33d57733427?auto=format&fit=crop&w=800&q=80"} 
+                      alt={type.name} 
+                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                    <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-md px-4 py-2 rounded-2xl shadow-sm">
+                       <span className="text-lg font-black text-slate-900">₹{Number(type.price).toLocaleString('en-IN')}</span>
+                       <span className="text-[10px] text-slate-400 font-bold uppercase ml-1">/ Night</span>
+                    </div>
+                  </div>
+                  
+                  <div className="p-8">
+                    <div className="flex justify-between items-center mb-4">
+                       <h3 className="text-2xl font-bold text-slate-900 tracking-tight">{type.name}</h3>
+                       <div className="w-10 h-10 bg-blue-50 rounded-xl flex items-center justify-center text-blue-600">
+                          <BedDouble size={20} />
+                       </div>
+                    </div>
+
+                    <div className="flex items-center gap-6 mb-6">
+                       <div className="flex items-center gap-2">
+                          <div className="p-1.5 bg-slate-100 rounded-lg"><Users size={12} className="text-slate-500" /></div>
+                          <span className="text-xs font-bold text-slate-600">Up to {type.capacity} Guests</span>
+                       </div>
+                       <div className="flex items-center gap-2">
+                          <div className="p-1.5 bg-slate-100 rounded-lg"><Coffee size={12} className="text-slate-500" /></div>
+                          <span className="text-xs font-bold text-slate-600">Official Rate</span>
+                       </div>
+                    </div>
+
+                    <p className="text-slate-400 text-sm leading-relaxed mb-8 line-clamp-2 font-medium">
+                       {type.description || `Experience the pinnacle of luxury in our meticulously designed ${type.name.toLowerCase()}. Featuring panoramic views and bespoke amenities.`}
+                    </p>
+
+                    <div className="flex flex-wrap gap-2 mb-8">
+                       {type.amenities?.slice(0, 3).map((a: string, i: number) => (
+                         <Badge key={i} variant="secondary" className="bg-slate-50 text-slate-500 border-none text-[10px] uppercase tracking-wider">{a}</Badge>
+                       ))}
+                    </div>
+
+                    <Button 
+                      className="w-full h-14 bg-slate-900 hover:bg-blue-600 text-white font-black rounded-2xl shadow-xl transition-all duration-300 group-hover:shadow-blue-200"
+                      onClick={() => {
+                        setFormData({ ...formData, roomTypeId: type.id.toString() });
+                        setIsDialogOpen(true);
+                      }}
+                    >
+                      <div className="flex items-center justify-center gap-2">
+                         Reserve Now
+                         <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
+                      </div>
+                    </Button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </TabsContent>
+        )}
 
         <TabsContent value="list">
           <Card className="border border-slate-200 shadow-sm mb-4">
@@ -593,6 +667,10 @@ export default function BookingsPage() {
                       <p className="text-base font-medium">{selectedBooking.guestEmail || 'N/A'}</p>
                     </div>
                     <div>
+                      <h4 className="text-sm font-semibold text-slate-500">Phone</h4>
+                      <p className="text-base font-medium">{selectedBooking.guestPhone || 'N/A'}</p>
+                    </div>
+                    <div>
                       <h4 className="text-sm font-semibold text-slate-500">Room / Type</h4>
                       <p className="text-base font-medium">{getRoomDisplay(selectedBooking)}</p>
                     </div>
@@ -609,6 +687,10 @@ export default function BookingsPage() {
                       <Badge variant="outline" className={statusColors[selectedBooking.status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}>
                         {selectedBooking.status.replace('_', ' ')}
                       </Badge>
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-semibold text-slate-500">Meal Plan</h4>
+                      <p className="text-base font-medium">{selectedBooking.plan?.name || 'Room Only'}</p>
                     </div>
                     <div>
                       <h4 className="text-sm font-semibold text-slate-500">PAX</h4>
