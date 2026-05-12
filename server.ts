@@ -22,10 +22,16 @@ dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Ensure uploads directory exists
+// Ensure uploads directory exists (Skip or try-catch for serverless environments like Vercel)
 const uploadDir = path.join(__dirname, 'public', 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+if (process.env.VERCEL !== '1') {
+  try {
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+  } catch (err) {
+    console.warn('Could not create uploads directory:', err);
+  }
 }
 
 // Multer config
