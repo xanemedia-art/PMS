@@ -212,7 +212,7 @@ export default function PresentationPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentSlide]);
 
-  const slideCount = 14;
+  const slideCount = 16;
 
   const nextSlide = () => {
     if (currentSlide < slideCount - 1) {
@@ -427,7 +427,9 @@ export default function PresentationPage() {
     { name: '11. Customer Success', desc: 'Reviews & ROI', icon: MessageSquare },
     { name: '12. Competitor Study', desc: 'Market Comparison', icon: Award },
     { name: '13. Safe Deletions', desc: 'Clean UI & Data', icon: Trash2 },
-    { name: '14. Connect & Pitch', desc: 'Schedule Demo', icon: Play },
+    { name: '14. Seamless Onboarding', desc: 'Rapid Deployment', icon: Settings },
+    { name: '15. Flexible Pricing', desc: 'Discovery & Quotation', icon: DollarSign },
+    { name: '16. Connect & Pitch', desc: 'Schedule Demo', icon: Play },
   ];
 
   // Render slides dynamically
@@ -1735,7 +1737,140 @@ export default function PresentationPage() {
           </div>
         );
 
-      case 13: // Slide 14: Call to Action / Pitch Wrap-up
+      case 13: // Slide 14: Seamless Onboarding
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center h-full max-w-5xl mx-auto py-4">
+            <div className="lg:col-span-5 space-y-6 text-left">
+              <h2 className="text-3xl lg:text-4xl font-extrabold text-slate-900">
+                Seamless Client Onboarding
+              </h2>
+              <p className="text-sm text-slate-650 leading-relaxed">
+                Deploying Xane PMS for a new property takes under 24 hours. Our multi-tenant architecture ensures each client receives an isolated, secure environment.
+              </p>
+              
+              <div className="space-y-4 pt-2">
+                <div className="flex gap-3 items-start">
+                  <div className="p-2 bg-blue-50 text-blue-500 rounded-lg shrink-0 border border-blue-100">
+                    <Shield className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-slate-800">1. Instant Database Provisioning</h4>
+                    <p className="text-[10px] text-slate-500 mt-1">We create a dedicated Supabase Postgres instance for each client, ensuring complete data isolation and security.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <div className="p-2 bg-emerald-50 text-emerald-500 rounded-lg shrink-0 border border-emerald-100">
+                    <Settings className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-slate-800">2. Quick Environment Setup</h4>
+                    <p className="text-[10px] text-slate-500 mt-1">Simply configure the secure <code>.env</code> file with the property's unique URLs and API keys.</p>
+                  </div>
+                </div>
+                <div className="flex gap-3 items-start">
+                  <div className="p-2 bg-purple-50 text-purple-500 rounded-lg shrink-0 border border-purple-100">
+                    <Globe className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-xs text-slate-800">3. Vercel Cloud Deployment</h4>
+                    <p className="text-[10px] text-slate-500 mt-1">The frontend and direct booking engine are instantly pushed to Vercel, providing a blazing-fast global edge network.</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            
+            <div className="lg:col-span-7 flex justify-center">
+              <div className="p-5 rounded-2xl border border-slate-700 bg-slate-900 text-slate-300 font-mono text-xs shadow-xl w-full max-w-lg relative overflow-hidden">
+                <div className="absolute top-0 right-0 p-3 opacity-20">
+                  <RefreshCw className="w-24 h-24 animate-spin-slow text-blue-400" />
+                </div>
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                  <div className="w-2.5 h-2.5 rounded-full bg-yellow-500"></div>
+                  <div className="w-2.5 h-2.5 rounded-full bg-emerald-500"></div>
+                  <span className="text-[10px] font-semibold tracking-wider opacity-70 ml-2">.env — Configuration</span>
+                </div>
+                <div className="space-y-2 opacity-90 leading-relaxed text-[11px]">
+                  <p><span className="text-purple-400">DATABASE_URL</span>=<span className="text-emerald-300">"postgresql://postgres:pwd@db.supabase.co:5432/postgres"</span></p>
+                  <p><span className="text-purple-400">HOTEL_NAME</span>=<span className="text-emerald-300">"New Client Resort & Spa"</span></p>
+                  <p><span className="text-purple-400">VERCEL_PROJECT_ID</span>=<span className="text-emerald-300">"prj_7x9A1..."</span></p>
+                  <p><span className="text-purple-400">NODE_ENV</span>=<span className="text-emerald-300">"production"</span></p>
+                </div>
+                <div className="mt-6 border-t border-slate-700/50 pt-4">
+                  <div className="flex items-center gap-2 text-emerald-400 font-semibold mb-3">
+                    <Check className="w-3.5 h-3.5" /> <span>Deploying to Vercel Edge Network...</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                    <div className="w-3/4 h-full bg-blue-500 rounded-full relative">
+                      <div className="absolute top-0 right-0 bottom-0 w-8 bg-gradient-to-r from-transparent to-white/30 animate-pulse"></div>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-[10px] opacity-60 flex justify-between font-sans font-medium">
+                    <span>Provisioning Supabase... DONE</span>
+                    <span>75%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 14: // Slide 15: Pricing & Discovery
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center h-full max-w-5xl mx-auto py-4">
+            <div className="lg:col-span-12 space-y-6 text-center max-w-2xl mx-auto">
+              <h2 className="text-3xl lg:text-4xl font-extrabold text-slate-900">
+                Flexible & Tailored Pricing
+              </h2>
+              <p className="text-sm text-slate-650 leading-relaxed">
+                Every property has unique operational needs, room capacities, and feature requirements. We believe in customized value-based pricing, which is why our charges differ from client to client based on exact requirements.
+              </p>
+            </div>
+            
+            <div className="lg:col-span-12 grid grid-cols-1 md:grid-cols-3 gap-5 mt-6">
+              <div className="p-6 rounded-2xl border border-slate-200 bg-white shadow-sm flex flex-col items-center text-center space-y-4">
+                <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center border border-blue-100">
+                  <MessageSquare className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-800 text-sm">1. Discovery Call</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
+                    We schedule a consultation to understand your exact bottlenecks, current software stack, and property size.
+                  </p>
+                </div>
+              </div>
+              
+              <div className="p-6 rounded-2xl border border-blue-200 bg-blue-50 shadow-md flex flex-col items-center text-center space-y-4 relative scale-105 z-10">
+                <div className="absolute -top-3 px-3 py-1 bg-blue-600 text-white text-[9px] font-bold uppercase tracking-wider rounded-full shadow-sm">
+                  Required Step
+                </div>
+                <div className="w-12 h-12 bg-white text-blue-600 rounded-full flex items-center justify-center shadow-sm border border-blue-100">
+                  <Settings className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-800 text-sm">2. Requirements Mapping</h4>
+                  <p className="text-[11px] text-slate-600 leading-relaxed mt-2">
+                    Do you need the Travel Agent portal? KOT integration? We define the exact scope of modules needed to run smoothly.
+                  </p>
+                </div>
+              </div>
+              
+              <div className="p-6 rounded-2xl border border-slate-200 bg-white shadow-sm flex flex-col items-center text-center space-y-4">
+                <div className="w-12 h-12 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center border border-emerald-100">
+                  <DollarSign className="w-5 h-5" />
+                </div>
+                <div>
+                  <h4 className="font-bold text-slate-800 text-sm">3. Clear Quotation</h4>
+                  <p className="text-[11px] text-slate-500 leading-relaxed mt-2">
+                    We provide a transparent, upfront quotation with no hidden fees or surprise OTA-like percentage cuts on bookings.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 15: // Slide 16: Call to Action / Pitch Wrap-up
         return (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center h-full max-w-5xl mx-auto py-4">
             <div className="lg:col-span-6 space-y-6 text-left">
