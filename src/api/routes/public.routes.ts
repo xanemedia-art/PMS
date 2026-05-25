@@ -5,6 +5,20 @@ import { eq, and, ne, lt, gt, inArray } from 'drizzle-orm';
 
 const router = express.Router();
 
+// GET /api/public/hotels
+router.get('/hotels', async (req, res) => {
+  try {
+    const allHotels = await db.select({
+      id: hotels.id,
+      name: hotels.name,
+      address: hotels.address
+    }).from(hotels);
+    res.json(allHotels);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch properties' });
+  }
+});
+
 // GET /api/public/hotel/:hotelId
 router.get('/hotel/:hotelId', async (req, res) => {
   try {

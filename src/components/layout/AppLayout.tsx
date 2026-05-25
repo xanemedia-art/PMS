@@ -1,12 +1,48 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X, Coffee, MessageSquare } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function AppLayout() {
-  const { user, logout } = useAuth();
+  const { user, token, login, logout } = useAuth();
   const navigate = useNavigate();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const [hotelsList, setHotelsList] = useState<{ id: number; name: string }[]>([]);
+
+  useEffect(() => {
+    if (token) {
+      fetch('/api/settings/hotels', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setHotelsList(data);
+          }
+        })
+        .catch(err => console.error("Failed to fetch hotels list", err));
+    }
+  }, [token]);
+
+  const handleSwitchHotel = async (hotelId: number) => {
+    try {
+      const res = await fetch('/api/auth/switch-hotel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ hotelId })
+      });
+      const data = await res.json();
+      if (data.token && data.user) {
+        login(data.token, data.user);
+        window.location.reload();
+      }
+    } catch (err) {
+      console.error("Failed to switch hotel", err);
+    }
+  };
 
   const handleLogout = () => {
     logout();
@@ -22,6 +58,8 @@ export default function AppLayout() {
       roles: ['admin', 'manager', 'staff', 'agent'] 
     },
     { name: 'Rooms', path: '/rooms', icon: BedDouble, roles: ['admin', 'manager', 'staff'] },
+    { name: 'Restaurant', path: '/restaurant', icon: Coffee, roles: ['admin', 'manager', 'staff'] },
+    { name: 'Guest Requests', path: '/guest-requests', icon: MessageSquare, roles: ['admin', 'manager', 'staff'] },
     { name: 'Housekeeping', path: '/housekeeping', icon: UserRoundCog, roles: ['admin', 'manager', 'staff'] },
     { name: 'Agents', path: '/agents', icon: Users, roles: ['admin', 'manager'] },
     { name: 'Expenses', path: '/expenses', icon: Wallet, roles: ['admin', 'manager', 'staff'] },
@@ -89,13 +127,31 @@ export default function AppLayout() {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden w-full">
-        <header className="h-16 border-b border-gray-200 bg-white flex items-center px-4 md:px-8 shadow-sm z-10 sticky top-0 shrink-0 gap-4">
-          <button className="md:hidden p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-md" onClick={() => setIsMobileMenuOpen(true)}>
-            <Menu className="w-6 h-6" />
-          </button>
-          <h2 className="text-xl font-semibold tracking-tight text-gray-800 truncate">
-            {user?.role === 'agent' ? 'Agent Workspace' : 'Admin Workspace'}
-          </h2>
+        <header className="h-16 border-b border-gray-200 bg-white flex items-center justify-between px-4 md:px-8 shadow-sm z-10 sticky top-0 shrink-0">
+          <div className="flex items-center gap-4">
+            <button className="md:hidden p-2 -ml-2 text-gray-600 hover:bg-gray-100 rounded-md" onClick={() => setIsMobileMenuOpen(true)}>
+              <Menu className="w-6 h-6" />
+            </button>
+            <h2 className="text-xl font-semibold tracking-tight text-gray-800 truncate">
+              {user?.role === 'agent' ? 'Agent Workspace' : 'Admin Workspace'}
+            </h2>
+          </div>
+          
+          {/* Property Switcher */}
+          {hotelsList.length > 1 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Active Property:</span>
+              <select
+                value={user?.hotelId || ''}
+                onChange={(e) => handleSwitchHotel(parseInt(e.target.value))}
+                className="bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-3 py-1.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {hotelsList.map(h => (
+                  <option key={h.id} value={h.id}>{h.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
         </header>
 
         <div className="flex-1 overflow-auto p-4 md:p-8">

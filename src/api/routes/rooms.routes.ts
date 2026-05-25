@@ -18,6 +18,7 @@ router.get('/', async (req: AuthRequest, res) => {
       id: rooms.id,
       number: rooms.number,
       status: rooms.status,
+      guestPin: rooms.guestPin,
       roomType: roomTypes.name,
       price: roomTypes.price,
       capacity: roomTypes.capacity,
@@ -142,6 +143,29 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
     res.json(updated[0]);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update room' });
+  }
+});
+
+// Reset room guest PIN
+router.post('/:id/reset-pin', requireRole(['admin', 'manager', 'staff']), async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+    const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
+
+    const updated = await db.update(rooms)
+      .set({ guestPin: randomPin })
+      .where(and(eq(rooms.id, id), eq(rooms.hotelId, hotelId)))
+      .returning();
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: 'Room not found' });
+      return;
+    }
+
+    res.json(updated[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to reset room PIN' });
   }
 });
 

@@ -148,4 +148,85 @@ router.delete('/plans/:id', requireRole(['admin', 'manager']), async (req: AuthR
   }
 });
 
+// --- MULTI-PROPERTY CRUD (Admin only) ---
+
+// Get all properties (hotels)
+router.get('/hotels', async (req: AuthRequest, res) => {
+  try {
+    const allHotels = await db.select().from(hotels);
+    res.json(allHotels);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Create new property
+router.post('/hotels', requireRole(['admin']), async (req: AuthRequest, res) => {
+  try {
+    const { name, address } = req.body;
+    if (!name) {
+      res.status(400).json({ error: 'Hotel name is required' });
+      return;
+    }
+
+    const newHotel = await db.insert(hotels).values({
+      name,
+      address: address || null
+    }).returning();
+
+    res.status(201).json(newHotel[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update property
+router.patch('/hotels/:id', requireRole(['admin']), async (req: AuthRequest, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    const { name, address } = req.body;
+
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid hotel ID' });
+      return;
+    }
+
+    const updated = await db.update(hotels)
+      .set({ name, address })
+      .where(eq(hotels.id, id))
+      .returning();
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: 'Hotel not found' });
+      return;
+    }
+
+    res.json(updated[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete property
+router.delete('/hotels/:id', requireRole(['admin']), async (req: AuthRequest, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid hotel ID' });
+      return;
+    }
+
+    // Do not allow deleting the current hotel the user is logged into to prevent locking themselves out
+    if (id === req.user!.hotelId) {
+      res.status(400).json({ error: 'Cannot delete the property you are currently managing' });
+      return;
+    }
+
+    await db.delete(hotels).where(eq(hotels.id, id));
+    res.json({ message: 'Property deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Cannot delete: Property has active data or is referenced by other records' });
+  }
+});
+
 export default router;

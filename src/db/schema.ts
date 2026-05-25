@@ -1,4 +1,4 @@
-import { pgTable, text, integer, real, serial, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, real, serial, timestamp, boolean } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // --- CORE TABLES ---
@@ -42,7 +42,9 @@ export const rooms = pgTable('rooms', {
   roomTypeId: integer('room_type_id').references(() => roomTypes.id).notNull(),
   number: text('number').notNull(),
   status: text('status', { enum: ['available', 'occupied', 'maintenance', 'dirty'] }).default('available'),
+  guestPin: text('guest_pin'), // 4-digit PIN for guest portal login
 });
+
 
 // 5. Room Plans
 export const plans = pgTable('plans', {
@@ -109,4 +111,52 @@ export const expenses = pgTable('expenses', {
   description: text('description'),
   createdAt: timestamp('created_at').defaultNow(),
 });
+
+// 10. Restaurant & Kitchen Inventory
+export const restaurantInventory = pgTable('restaurant_inventory', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  name: text('name').notNull(),
+  quantity: real('quantity').default(0).notNull(),
+  unit: text('unit').default('pcs').notNull(), // kg, pcs, liters, etc.
+  minStock: real('min_stock').default(0).notNull(), // Threshold for alerts
+  updatedAt: timestamp('updated_at').defaultNow(),
+});
+
+// 11. Restaurant Orders & Room Service KOTs
+export const restaurantOrders = pgTable('restaurant_orders', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  bookingId: integer('booking_id').references(() => bookings.id), // Nullable for direct/walk-in restaurant guests
+  roomId: integer('room_id').references(() => rooms.id), // Nullable for direct/walk-in
+  tableNumber: text('table_number'), // Nullable if room service
+  items: text('items').notNull(), // JSON string: [{ name: string, quantity: number, price: number }]
+  totalAmount: real('total_amount').notNull(),
+  status: text('status', { enum: ['pending', 'preparing', 'delivered', 'cancelled'] }).default('pending').notNull(),
+  type: text('type', { enum: ['room_service', 'dine_in', 'takeaway'] }).default('dine_in').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// 12. Guest Chats
+export const guestChats = pgTable('guest_chats', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  bookingId: integer('booking_id').references(() => bookings.id).notNull(),
+  sender: text('sender', { enum: ['guest', 'staff'] }).notNull(),
+  message: text('message').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// 13. Restaurant Menu Items
+export const restaurantMenu = pgTable('restaurant_menu', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  name: text('name').notNull(),
+  category: text('category').notNull(), // Starters, Mains, Drinks, Desserts, etc.
+  price: real('price').notNull(),
+  description: text('description'),
+  isAvailable: boolean('is_available').default(true).notNull(),
+});
+
+
 

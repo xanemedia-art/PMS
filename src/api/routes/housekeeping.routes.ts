@@ -94,4 +94,31 @@ router.post('/', requireRole(['admin', 'manager', 'staff']), async (req: AuthReq
   }
 });
 
+// Delete a housekeeping task manually
+router.delete('/:id', requireRole(['admin', 'manager', 'staff']), async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid task ID' });
+      return;
+    }
+
+    const deleted = await db.delete(housekeepingTasks)
+      .where(and(eq(housekeepingTasks.id, id), eq(housekeepingTasks.hotelId, hotelId)))
+      .returning();
+
+    if (deleted.length === 0) {
+      res.status(404).json({ error: 'Housekeeping task not found' });
+      return;
+    }
+
+    res.json({ success: true, message: 'Housekeeping task deleted successfully' });
+  } catch (error) {
+    console.error('Delete housekeeping task error:', error);
+    res.status(500).json({ error: 'Failed to delete housekeeping task' });
+  }
+});
+
 export default router;

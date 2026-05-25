@@ -14,6 +14,9 @@ import plansRoutes from './src/api/routes/plans.routes.js';
 import expensesRoutes from './src/api/routes/expenses.routes.js';
 import settingsRoutes from './src/api/routes/settings.routes.js';
 import publicRoutes from './src/api/routes/public.routes.js';
+import guestRoutes from './src/api/routes/guest.routes.js';
+import restaurantRoutes from './src/api/routes/restaurant.routes.js';
+
 
 import multer from 'multer';
 import fs from 'fs';
@@ -78,6 +81,9 @@ export async function createApp() {
   app.use('/api/expenses', expensesRoutes);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/public', publicRoutes);
+  app.use('/api/guest', guestRoutes);
+  app.use('/api/restaurant', restaurantRoutes);
+
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production' && process.env.VERCEL !== '1') {

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import RoomCard from '../components/booking-engine/RoomCard';
 import { Calendar as CalendarIcon, Tag, BedDouble, ChevronRight, MapPin, Star, ShieldCheck, Mail, User, Phone, Users, Coffee, XCircle, Hotel } from 'lucide-react';
 import { format, addDays } from 'date-fns';
@@ -40,8 +40,26 @@ export default function BookingEnginePage() {
   
   const [checkIn, setCheckIn] = useState<string>(format(new Date(), 'yyyy-MM-dd'));
   const [checkOut, setCheckOut] = useState<string>(format(addDays(new Date(), 1), 'yyyy-MM-dd'));
-  const [selectedProperty, setSelectedProperty] = useState('Fyra Kothi');
-  const properties = ['Fyra Kothi', 'Fyra Manor', 'Fyra Villa'];
+  const navigate = useNavigate();
+  const [properties, setProperties] = useState<{ id: number; name: string; address: string | null }[]>([]);
+  const [selectedPropertyId, setSelectedPropertyId] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch('/api/public/hotels')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setProperties(data);
+        }
+      })
+      .catch(err => console.error("Failed to fetch hotels", err));
+  }, []);
+
+  useEffect(() => {
+    if (hotelId) {
+      setSelectedPropertyId(parseInt(hotelId));
+    }
+  }, [hotelId]);
   
   const [loading, setLoading] = useState(false);
   const [selectedRooms, setSelectedRooms] = useState<{ [key: string]: { count: number, planId: number | null, pax: number } }>({});
@@ -382,16 +400,16 @@ export default function BookingEnginePage() {
                 <div className="grid grid-cols-3 gap-3">
                   {properties.map((prop) => (
                     <button
-                      key={prop}
-                      onClick={() => setSelectedProperty(prop)}
+                      key={prop.id}
+                      onClick={() => navigate(`/book/${prop.id}`)}
                       className={`relative py-4 px-2 rounded-2xl font-black text-xs transition-all duration-300 border-2 ${
-                        selectedProperty === prop 
+                        selectedPropertyId === prop.id 
                           ? 'bg-slate-900 text-white border-slate-900 shadow-xl shadow-slate-200' 
                           : 'bg-white text-slate-400 border-slate-100 hover:border-blue-200 hover:text-slate-600'
                       }`}
                     >
-                      {prop}
-                      {selectedProperty === prop && (
+                      {prop.name}
+                      {selectedPropertyId === prop.id && (
                         <motion.div 
                           layoutId="activeProperty"
                           className="absolute inset-0 bg-slate-900 rounded-2xl -z-10"

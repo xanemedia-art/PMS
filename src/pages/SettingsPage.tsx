@@ -12,7 +12,7 @@ import { User, Hotel, Database, Users, Trash2, Plus, Save, Key, AlertCircle } fr
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function SettingsPage() {
-  const { user, token } = useAuth();
+  const { user, token, login } = useAuth();
   const queryClient = useQueryClient();
 
   // Profile State
@@ -20,6 +20,8 @@ export default function SettingsPage() {
   
   // Hotel State
   const [hotelData, setHotelData] = useState({ name: '', address: '' });
+  const [editingHotelId, setEditingHotelId] = useState<number | null>(null);
+  const [isHotelDialogOpen, setIsHotelDialogOpen] = useState(false);
 
   // Team State
   const [isTeamDialogOpen, setIsTeamDialogOpen] = useState(false);
@@ -59,16 +61,13 @@ export default function SettingsPage() {
     staleTime: Infinity,
   });
 
-  const { isLoading: hotelLoading } = useQuery({
-    queryKey: ['hotel'],
+  const { data: hotelsList = [], isLoading: hotelsLoading } = useQuery({
+    queryKey: ['hotels'],
     queryFn: async () => {
-      const res = await fetch('/api/settings/hotel', { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) throw new Error('Failed to fetch hotel');
-      const data = await res.json();
-      setHotelData(data);
-      return data;
+      const res = await fetch('/api/settings/hotels', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to fetch properties');
+      return res.json();
     },
-    staleTime: Infinity,
   });
 
   const { data: roomTypes = [] } = useQuery({
@@ -123,22 +122,47 @@ export default function SettingsPage() {
     onError: (err: any) => alert(err.message)
   });
 
-  const updateHotelMutation = useMutation({
+  const saveHotelMutation = useMutation({
     mutationFn: async (data: any) => {
-      const res = await fetch('/api/settings/hotel', {
-        method: 'PATCH',
+      const url = editingHotelId ? `/api/settings/hotels/${editingHotelId}` : '/api/settings/hotels';
+      const method = editingHotelId ? 'PATCH' : 'POST';
+      const res = await fetch(url, {
+        method,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(data)
       });
-      if (!res.ok) throw new Error('Failed to update hotel');
+      if (!res.ok) throw new Error('Failed to save property details');
       return res.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['hotel'] });
-      alert('Hotel updated successfully');
+      queryClient.invalidateQueries({ queryKey: ['hotels'] });
+      setIsHotelDialogOpen(false);
+      setEditingHotelId(null);
+      setHotelData({ name: '', address: '' });
+      alert('Property details saved successfully');
     },
     onError: (err: any) => alert(err.message)
   });
+
+  const handleSwitchHotel = async (hotelId: number) => {
+    try {
+      const res = await fetch('/api/auth/switch-hotel', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ hotelId })
+      });
+      const data = await res.json();
+      if (data.token && data.user) {
+        login(data.token, data.user);
+        window.location.reload();
+      }
+    } catch (err) {
+      console.error("Failed to switch hotel", err);
+    }
+  };
 
   const addTeamMemberMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -264,6 +288,7 @@ export default function SettingsPage() {
       if (variables.type === 'rooms') queryClient.invalidateQueries({ queryKey: ['rooms'] });
       if (variables.type === 'plans') queryClient.invalidateQueries({ queryKey: ['plans'] });
       if (variables.type === 'team') queryClient.invalidateQueries({ queryKey: ['team'] });
+      if (variables.type === 'hotels') queryClient.invalidateQueries({ queryKey: ['hotels'] });
     },
     onError: (err: any) => alert(err.message)
   });
@@ -283,7 +308,7 @@ export default function SettingsPage() {
           <TabsTrigger value="profile" className="gap-2"><User className="w-4 h-4" /> Profile</TabsTrigger>
           {(user?.role === 'admin' || user?.role === 'manager') && (
             <>
-              <TabsTrigger value="hotel" className="gap-2"><Hotel className="w-4 h-4" /> Hotel</TabsTrigger>
+              <TabsTrigger value="hotel" className="gap-2"><Hotel className="w-4 h-4" /> Properties</TabsTrigger>
               <TabsTrigger value="inventory" className="gap-2"><Database className="w-4 h-4" /> Inventory</TabsTrigger>
             </>
           )}
@@ -341,35 +366,93 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* HOTEL TAB */}
+        {/* PROPERTIES TAB */}
         <TabsContent value="hotel">
           <Card className="border-slate-200 shadow-sm">
-            <CardHeader className="bg-slate-50/50 border-b border-slate-100">
-              <CardTitle>Hotel Information</CardTitle>
-              <CardDescription>Configure the public details of your property.</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between bg-slate-50/50 border-b border-slate-100 py-4">
+              <div>
+                <CardTitle>Properties</CardTitle>
+                <CardDescription>Manage hotels and properties in your chain.</CardDescription>
+              </div>
+              <Button onClick={() => {
+                setEditingHotelId(null);
+                setHotelData({ name: '', address: '' });
+                setIsHotelDialogOpen(true);
+              }} className="gap-2">
+                <Plus className="w-4 h-4" /> Add Property
+              </Button>
             </CardHeader>
-            <CardContent className="pt-6">
-              <form onSubmit={(e) => { e.preventDefault(); updateHotelMutation.mutate(hotelData); }} className="space-y-6 max-w-xl">
-                <div className="space-y-2">
-                  <Label>Hotel Name</Label>
-                  <Input 
-                    value={hotelData.name} 
-                    onChange={e => setHotelData({...hotelData, name: e.target.value})}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Address</Label>
-                  <Input 
-                    value={hotelData.address} 
-                    onChange={e => setHotelData({...hotelData, address: e.target.value})}
-                  />
-                </div>
-                <Button type="submit" disabled={updateHotelMutation.isPending} variant="secondary" className="gap-2">
-                  <Save className="w-4 h-4" />
-                  {updateHotelMutation.isPending ? 'Updating...' : 'Update Hotel Details'}
-                </Button>
-              </form>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto w-full">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="pl-6">Property Name</TableHead>
+                      <TableHead>Address</TableHead>
+                      <TableHead className="text-right pr-6">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {hotelsLoading ? (
+                      <TableRow><TableCell colSpan={3} className="text-center py-4 text-slate-400">Loading properties...</TableCell></TableRow>
+                    ) : hotelsList.map((hotelItem: any) => (
+                      <TableRow key={hotelItem.id} className={user?.hotelId === hotelItem.id ? 'bg-blue-50/30' : ''}>
+                        <TableCell className="pl-6 font-medium">
+                          <div className="flex items-center gap-2">
+                            {hotelItem.name}
+                            {user?.hotelId === hotelItem.id && (
+                              <Badge variant="default" className="text-[10px] py-0.5 px-1.5 font-bold">Active</Badge>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-slate-500">{hotelItem.address || 'No address'}</TableCell>
+                        <TableCell className="text-right pr-6 flex justify-end gap-2 items-center">
+                          {user?.hotelId !== hotelItem.id ? (
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              className="h-8 border-blue-200 text-blue-600 hover:bg-blue-50"
+                              onClick={() => handleSwitchHotel(hotelItem.id)}
+                            >
+                              Manage
+                            </Button>
+                          ) : (
+                            <span className="text-xs text-slate-400 font-medium px-3">Managing</span>
+                          )}
+                          <Button 
+                            variant="ghost" 
+                            size="sm"
+                            className="h-8 text-blue-500 hover:text-blue-600"
+                            onClick={() => {
+                              setEditingHotelId(hotelItem.id);
+                              setHotelData({
+                                name: hotelItem.name,
+                                address: hotelItem.address || ''
+                              });
+                              setIsHotelDialogOpen(true);
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-red-500 hover:text-red-600 h-8 w-8" 
+                            onClick={() => {
+                              if (confirm(`Are you sure you want to delete the property "${hotelItem.name}"?`)) {
+                                deleteItemMutation.mutate({ type: 'hotels', id: hotelItem.id });
+                              }
+                            }}
+                            disabled={deleteItemMutation.isPending || user?.hotelId === hotelItem.id}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
@@ -432,7 +515,11 @@ export default function SettingsPage() {
                                 variant="ghost" 
                                 size="icon" 
                                 className="text-red-500 hover:text-red-600 h-8 w-8" 
-                                onClick={() => deleteItemMutation.mutate({ type: 'room-types', id: type.id })}
+                                onClick={() => {
+                                  if (confirm(`Are you sure you want to delete the room type "${type.name}"?`)) {
+                                    deleteItemMutation.mutate({ type: 'room-types', id: type.id });
+                                  }
+                                }}
                                 disabled={deleteItemMutation.isPending}
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -476,7 +563,11 @@ export default function SettingsPage() {
                               variant="ghost" 
                               size="icon" 
                               className="text-red-500 hover:text-red-600 h-8 w-8" 
-                              onClick={() => deleteItemMutation.mutate({ type: 'rooms', id: room.id })}
+                              onClick={() => {
+                                if (confirm(`Are you sure you want to delete room number ${room.number}?`)) {
+                                  deleteItemMutation.mutate({ type: 'rooms', id: room.id });
+                                }
+                              }}
                               disabled={deleteItemMutation.isPending}
                             >
                               <Trash2 className="w-4 h-4" />
@@ -521,7 +612,11 @@ export default function SettingsPage() {
                             variant="ghost" 
                             size="icon" 
                             className="text-red-500 hover:text-red-600 h-8 w-8" 
-                            onClick={() => deleteItemMutation.mutate({ type: 'plans', id: plan.id })}
+                            onClick={() => {
+                              if (confirm(`Are you sure you want to delete the meal plan "${plan.name}"?`)) {
+                                deleteItemMutation.mutate({ type: 'plans', id: plan.id });
+                              }
+                            }}
                             disabled={deleteItemMutation.isPending}
                           >
                             <Trash2 className="w-4 h-4" />
@@ -581,7 +676,11 @@ export default function SettingsPage() {
                             variant="ghost" 
                             size="icon" 
                             className="text-red-500 hover:text-red-600 h-8 w-8" 
-                            onClick={() => deleteItemMutation.mutate({ type: 'team', id: member.id })}
+                            onClick={() => {
+                              if (confirm(`Are you sure you want to delete team member "${member.name}"?`)) {
+                                deleteItemMutation.mutate({ type: 'team', id: member.id });
+                              }
+                            }}
                             disabled={deleteItemMutation.isPending}
                           >
                             <Trash2 className="w-4 h-4" />
@@ -841,6 +940,41 @@ export default function SettingsPage() {
               <Button type="button" variant="outline" onClick={() => setIsPlanDialogOpen(false)}>Cancel</Button>
               <Button type="submit" disabled={createPlanMutation.isPending}>
                 {createPlanMutation.isPending ? 'Adding...' : 'Add Plan'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* HOTEL DIALOG */}
+      <Dialog open={isHotelDialogOpen} onOpenChange={(open) => {
+        setIsHotelDialogOpen(open);
+        if (!open) {
+          setEditingHotelId(null);
+          setHotelData({ name: '', address: '' });
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingHotelId ? 'Edit Property Details' : 'Add Property'}</DialogTitle>
+            <DialogDescription>Define the details of this property.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            saveHotelMutation.mutate(hotelData);
+          }} className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label>Property Name</Label>
+              <Input placeholder="e.g. Fyra Resort" value={hotelData.name} onChange={e => setHotelData({...hotelData, name: e.target.value})} required />
+            </div>
+            <div className="space-y-2">
+              <Label>Address</Label>
+              <Input placeholder="e.g. 123 Luxury Way" value={hotelData.address} onChange={e => setHotelData({...hotelData, address: e.target.value})} />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsHotelDialogOpen(false)}>Cancel</Button>
+              <Button type="submit" disabled={saveHotelMutation.isPending}>
+                {saveHotelMutation.isPending ? 'Saving...' : editingHotelId ? 'Save Changes' : 'Create Property'}
               </Button>
             </DialogFooter>
           </form>

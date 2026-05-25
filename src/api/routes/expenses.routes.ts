@@ -78,4 +78,31 @@ router.post('/', requireRole(['admin', 'manager', 'staff']), async (req: AuthReq
   }
 });
 
+// Delete an expense
+router.delete('/:id', requireRole(['admin', 'manager']), async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+    
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid expense ID' });
+      return;
+    }
+    
+    const deleted = await db.delete(expenses)
+      .where(and(eq(expenses.id, id), eq(expenses.hotelId, hotelId)))
+      .returning();
+      
+    if (deleted.length === 0) {
+      res.status(404).json({ error: 'Expense not found' });
+      return;
+    }
+    
+    res.json({ success: true, message: 'Expense deleted successfully' });
+  } catch (error) {
+    console.error('Delete expense error:', error);
+    res.status(500).json({ error: 'Failed to delete expense' });
+  }
+});
+
 export default router;

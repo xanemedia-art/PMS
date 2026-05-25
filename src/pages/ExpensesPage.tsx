@@ -6,13 +6,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '../context/AuthContext';
-import { Plus, TrendingDown, Receipt, Filter } from 'lucide-react';
+import { Plus, TrendingDown, Receipt, Filter, Trash2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function ExpensesPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [filterDate, setFilterDate] = useState(format(subDays(new Date(), 30), 'yyyy-MM-dd'));
@@ -59,6 +59,28 @@ export default function ExpensesPage() {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['expensesTrend'] });
       setOpen(false);
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const deleteExpenseMutation = useMutation({
+    mutationFn: async (expenseId: number) => {
+      const res = await fetch(`/api/expenses/${expenseId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to delete expense');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['expensesTrend'] });
+      alert('Expense deleted successfully');
     },
     onError: (err: any) => alert(err.message)
   });
@@ -222,16 +244,17 @@ export default function ExpensesPage() {
                   <TableHead>Type</TableHead>
                   <TableHead>Notes</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
+                  {(user?.role === 'admin' || user?.role === 'manager') && <TableHead className="text-right">Actions</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {expensesLoading ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-6 text-slate-500 animate-pulse">Loading expenses...</TableCell>
+                    <TableCell colSpan={(user?.role === 'admin' || user?.role === 'manager') ? 6 : 5} className="text-center py-6 text-slate-500 animate-pulse">Loading expenses...</TableCell>
                   </TableRow>
                 ) : expenses.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="text-center py-6 text-slate-500">No expense records found.</TableCell>
+                    <TableCell colSpan={(user?.role === 'admin' || user?.role === 'manager') ? 6 : 5} className="text-center py-6 text-slate-500">No expense records found.</TableCell>
                   </TableRow>
                 ) : (
                   expenses.map((expense: any) => (
@@ -249,6 +272,23 @@ export default function ExpensesPage() {
                       <TableCell className="text-right font-semibold text-red-600">
                         -₹{Number(expense.amount).toLocaleString(undefined, { minimumFractionDigits: 2 })}
                       </TableCell>
+                      {(user?.role === 'admin' || user?.role === 'manager') && (
+                        <TableCell className="text-right">
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            className="text-red-500 hover:text-red-600 h-8 w-8" 
+                            onClick={() => {
+                              if (confirm(`Are you sure you want to delete expense "${expense.name}"?`)) {
+                                deleteExpenseMutation.mutate(expense.id);
+                              }
+                            }}
+                            disabled={deleteExpenseMutation.isPending}
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </TableCell>
+                      )}
                     </TableRow>
                   ))
                 )}

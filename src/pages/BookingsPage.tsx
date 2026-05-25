@@ -24,6 +24,13 @@ export default function BookingsPage() {
   // List view filter state
   const [listDate, setListDate] = useState<string>('');
 
+  // Month view state
+  const [currentMonth, setCurrentMonth] = useState(() => {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() };
+  });
+
+
   // Queries
   const { data: bookings = [], isLoading: bookingsLoading } = useQuery({
     queryKey: ['bookings'],
@@ -201,6 +208,112 @@ export default function BookingsPage() {
     },
     onError: (err: any) => alert(err.message)
   });
+
+  const resetPinMutation = useMutation({
+    mutationFn: async (roomId: number) => {
+      const res = await fetch(`/api/rooms/${roomId}/reset-pin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) throw new Error('Failed to reset PIN');
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      alert(`PIN successfully reset. New PIN: ${data.guestPin}`);
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const deleteBookingMutation = useMutation({
+    mutationFn: async (bookingId: number) => {
+      const res = await fetch(`/api/bookings/${bookingId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to delete booking');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      setSelectedBooking(null);
+      alert('Booking deleted successfully');
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const monthViewData = useMemo(() => {
+    if (!rooms.length) return [];
+
+    const totalRoomsCount = rooms.length;
+    const { year, month } = currentMonth;
+    const numDays = new Date(year, month + 1, 0).getDate();
+    const rows = [];
+
+    for (let day = 1; day <= numDays; day++) {
+      const dateObj = new Date(year, month, day);
+      // Format as local YYYY-MM-DD
+      const yyyy = dateObj.getFullYear();
+      const mm = String(dateObj.getMonth() + 1).padStart(2, '0');
+      const dd = String(dateObj.getDate()).padStart(2, '0');
+      const dateStr = `${yyyy}-${mm}-${dd}`;
+
+      // Calculate occupied rooms on this date
+      const occupiedByRoomId = rooms.filter(r => {
+        return bookings.some((b: any) =>
+          b.roomId === r.id &&
+          b.status !== 'cancelled' &&
+          b.status !== 'checked_out' &&
+          b.checkInDate <= dateStr &&
+          b.checkOutDate > dateStr
+        );
+      }).length;
+
+      const occupiedByRoomType = bookings.filter((b: any) =>
+        !b.roomId &&
+        b.status !== 'cancelled' &&
+        b.status !== 'checked_out' &&
+        b.checkInDate <= dateStr &&
+        b.checkOutDate > dateStr
+      ).reduce((sum: number, b: any) => sum + (b.roomCount || 1), 0);
+
+      const occupied = occupiedByRoomId + occupiedByRoomType;
+      const vacant = Math.max(0, totalRoomsCount - occupied);
+
+      rows.push({
+        dateStr,
+        formattedDate: dateObj.toLocaleDateString(undefined, { day: '2-digit', month: 'short', weekday: 'short' }),
+        totalRooms: totalRoomsCount,
+        vacant
+      });
+    }
+
+    return rows;
+  }, [rooms, bookings, currentMonth]);
+
+  const monthViewTotals = useMemo(() => {
+    let totalRoomsSum = 0;
+    let totalVacantSum = 0;
+    for (const row of monthViewData) {
+      totalRoomsSum += row.totalRooms;
+      totalVacantSum += row.vacant;
+    }
+    return {
+      totalRooms: totalRoomsSum,
+      vacant: totalVacantSum
+    };
+  }, [monthViewData]);
+
 
   const statusColors = {
     pending: 'bg-yellow-100 text-yellow-800',
@@ -403,8 +516,10 @@ export default function BookingsPage() {
         <TabsList className="mb-4">
           {user?.role === 'agent' && <TabsTrigger value="inventory">Room Inventory</TabsTrigger>}
           <TabsTrigger value="list">List View</TabsTrigger>
+          <TabsTrigger value="month">Month View</TabsTrigger>
           <TabsTrigger value="availability">Room Availability</TabsTrigger>
         </TabsList>
+
 
         {user?.role === 'agent' && (
           <TabsContent value="inventory" className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -712,12 +827,158 @@ export default function BookingsPage() {
                       <h4 className="text-sm font-semibold text-slate-500">Booked By</h4>
                       <p className="text-base font-medium capitalize">{selectedBooking.bookedBy?.name || 'Unknown'} ({selectedBooking.bookedBy?.role || 'staff'})</p>
                     </div>
+                    {selectedBooking.status === 'checked_in' && (
+                      <div className="col-span-2 bg-blue-50/70 p-4 rounded-xl border border-blue-100 flex items-center justify-between mt-2 animate-in fade-in duration-300">
+                        <div>
+                          <h4 className="text-xs font-black uppercase text-blue-600 tracking-wider">Guest Portal Access</h4>
+                          <p className="text-sm font-medium text-slate-700 mt-1">
+                            Room Number: <strong>{rooms.find((r: any) => r.id === selectedBooking.roomId)?.number || 'N/A'}</strong>
+                          </p>
+                          <p className="text-sm font-medium text-slate-700 mt-0.5">
+                            PIN: <strong className="text-blue-700 text-lg tracking-wider ml-1">{rooms.find((r: any) => r.id === selectedBooking.roomId)?.guestPin || 'Not set'}</strong>
+                          </p>
+                        </div>
+                        {rooms.find((r: any) => r.id === selectedBooking.roomId) && (
+                          <Button 
+                            size="sm" 
+                            variant="outline" 
+                            type="button"
+                            className="bg-white hover:bg-blue-100 text-blue-600 border-blue-200"
+                            onClick={() => {
+                              const rid = rooms.find((r: any) => r.id === selectedBooking.roomId)?.id;
+                              if (rid && confirm('Are you sure you want to regenerate the guest PIN?')) {
+                                resetPinMutation.mutate(rid);
+                              }
+                            }}
+                            disabled={resetPinMutation.isPending}
+                          >
+                            {resetPinMutation.isPending ? 'Resetting...' : 'Reset PIN'}
+                          </Button>
+                        )}
+                      </div>
+                    )}
+                    {user?.role !== 'agent' && (
+                      <div className="col-span-2 pt-4 border-t flex justify-end">
+                        <Button 
+                          variant="destructive"
+                          type="button"
+                          className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-2 rounded-xl shadow-md transition-all"
+                          onClick={() => {
+                            if (confirm(`⚠️ WARNING: Deleting this booking will also permanently delete all associated invoices, restaurant orders, and guest chats.\n\nAre you sure you want to delete this booking for ${selectedBooking.guestName}?`)) {
+                              deleteBookingMutation.mutate(selectedBooking.id);
+                            }
+                          }}
+                          disabled={deleteBookingMutation.isPending}
+                        >
+                          {deleteBookingMutation.isPending ? 'Deleting...' : 'Delete Booking'}
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
             </DialogContent>
           </Dialog>
         </TabsContent>
+
+        {/* ── Month View ── */}
+        <TabsContent value="month">
+          <div className="space-y-5">
+            <Card className="border border-slate-200 shadow-sm">
+              <CardContent className="py-4 px-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="flex items-center gap-2 text-slate-700">
+                    <CalendarDays className="w-5 h-5 text-blue-500" />
+                    <span className="font-semibold text-base">Monthly Forecasting View</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setCurrentMonth(prev => {
+                          const newMonth = prev.month === 0 ? 11 : prev.month - 1;
+                          const newYear = prev.month === 0 ? prev.year - 1 : prev.year;
+                          return { year: newYear, month: newMonth };
+                        });
+                      }}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </Button>
+                    <span className="text-slate-800 font-bold px-4 py-1 bg-slate-50 border border-slate-100 rounded-lg text-sm min-w-[130px] text-center">
+                      {new Date(currentMonth.year, currentMonth.month, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setCurrentMonth(prev => {
+                          const newMonth = prev.month === 11 ? 0 : prev.month + 1;
+                          const newYear = prev.month === 11 ? prev.year + 1 : prev.year;
+                          return { year: newYear, month: newMonth };
+                        });
+                      }}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                      onClick={() => {
+                        const now = new Date();
+                        setCurrentMonth({ year: now.getFullYear(), month: now.getMonth() });
+                      }}
+                    >
+                      Today
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-slate-200 shadow-sm overflow-hidden">
+              <CardContent className="p-0">
+                {loading ? (
+                  <div className="p-8 text-center text-slate-400 animate-pulse italic">
+                    Loading forecasting grid...
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto w-full">
+                    <Table>
+                      <TableHeader className="bg-slate-50">
+                        <TableRow className="hover:bg-transparent">
+                          <TableHead className="pl-6">Date</TableHead>
+                          <TableHead className="text-center">Total Rooms</TableHead>
+                          <TableHead className="text-center">Rooms Vacant</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {monthViewData.map((row, i) => (
+                          <TableRow key={i} className="hover:bg-slate-50/50">
+                            <TableCell className="pl-6 font-semibold text-slate-700">
+                              {row.formattedDate} <span className="text-slate-400 font-normal text-xs ml-2">({row.dateStr})</span>
+                            </TableCell>
+                            <TableCell className="text-center font-medium text-slate-600">{row.totalRooms}</TableCell>
+                            <TableCell className={`text-center font-bold ${row.vacant > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
+                              {row.vacant}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                        <TableRow className="bg-slate-100 hover:bg-slate-100 font-black border-t-2 border-slate-200">
+                          <TableCell className="pl-6 text-slate-800 uppercase tracking-wider">Total</TableCell>
+                          <TableCell className="text-center text-slate-800">{monthViewTotals.totalRooms}</TableCell>
+                          <TableCell className="text-center text-slate-800">{monthViewTotals.vacant}</TableCell>
+                        </TableRow>
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
 
         {/* ── Room Availability Sheet ── */}
         <TabsContent value="availability">

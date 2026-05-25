@@ -27,6 +27,11 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 import LandingPage from './pages/LandingPage';
 import BookingEnginePage from './pages/BookingEnginePage';
+import GuestLoginPage from './pages/GuestLoginPage';
+import GuestPortalPage from './pages/GuestPortalPage';
+import GuestRequestsPage from './pages/GuestRequestsPage';
+import RestaurantPage from './pages/RestaurantPage';
+import PresentationPage from './pages/PresentationPage';
 
 function MainRoutes() {
   const { user, isAuthenticated } = useAuth();
@@ -36,6 +41,9 @@ function MainRoutes() {
       <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
       <Route path="/book/:hotelId" element={<BookingEnginePage />} />
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+      <Route path="/guest/login" element={<GuestLoginPage />} />
+      <Route path="/guest" element={<GuestPortalPage />} />
+      <Route path="/pitch" element={<PresentationPage />} />
       
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={user?.role === 'agent' ? <Navigate to="/agent" replace /> : <DashboardPage />} />
@@ -48,6 +56,8 @@ function MainRoutes() {
         <Route path="/reports" element={<ReportsPage />} />
         <Route path="/expenses" element={<ExpensesPage />} />
         <Route path="/settings" element={<SettingsPage />} />
+        <Route path="/guest-requests" element={<GuestRequestsPage />} />
+        <Route path="/restaurant" element={<RestaurantPage />} />
       </Route>
     </Routes>
   );

@@ -4,10 +4,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '@/components/ui/button';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function RoomsPage() {
   const { token } = useAuth();
+  const queryClient = useQueryClient();
   
   const { data: rooms = [], isLoading } = useQuery({
     queryKey: ['rooms'],
@@ -17,6 +18,25 @@ export default function RoomsPage() {
       return res.json();
     },
     staleTime: 60000, // 1 minute cache
+  });
+
+  const resetPinMutation = useMutation({
+    mutationFn: async (roomId: number) => {
+      const res = await fetch(`/api/rooms/${roomId}/reset-pin`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) throw new Error('Failed to reset PIN');
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      alert(`PIN successfully reset. New PIN: ${data.guestPin}`);
+    },
+    onError: (err: any) => alert(err.message)
   });
 
   const statusColors = {
@@ -46,17 +66,18 @@ export default function RoomsPage() {
                   <TableHead>Capacity</TableHead>
                   <TableHead>Price/Night</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Guest PIN</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {isLoading ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-6 text-slate-500">Loading rooms...</TableCell>
+                    <TableCell colSpan={7} className="text-center py-6 text-slate-500">Loading rooms...</TableCell>
                   </TableRow>
                 ) : rooms.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center py-6 text-slate-500">No rooms found.</TableCell>
+                    <TableCell colSpan={7} className="text-center py-6 text-slate-500">No rooms found.</TableCell>
                   </TableRow>
                 ) : (
                   rooms.map((room: any) => (
@@ -70,8 +91,34 @@ export default function RoomsPage() {
                           {room.status.replace('_', ' ')}
                         </Badge>
                       </TableCell>
+                      <TableCell>
+                        {room.status === 'occupied' ? (
+                          <span className="font-mono font-bold text-blue-700 bg-blue-50 px-2.5 py-1 rounded-lg border border-blue-100">
+                            {room.guestPin || 'Not set'}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">-</span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm">Manage</Button>
+                        <div className="flex items-center justify-end gap-2">
+                          {room.status === 'occupied' && (
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                              onClick={() => {
+                                if (confirm(`Regenerate Guest PIN for Room ${room.number}?`)) {
+                                  resetPinMutation.mutate(room.id);
+                                }
+                              }}
+                              disabled={resetPinMutation.isPending}
+                            >
+                              Reset PIN
+                            </Button>
+                          )}
+                          <Button variant="ghost" size="sm">Manage</Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))

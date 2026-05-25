@@ -4,13 +4,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '../context/AuthContext';
 import { Button } from '@/components/ui/button';
+import { Trash2 } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function HousekeepingPage() {
-  const { token } = useAuth();
+  const { token, user } = useAuth();
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [formData, setFormData] = useState({
@@ -81,6 +82,29 @@ export default function HousekeepingPage() {
       queryClient.invalidateQueries({ queryKey: ['housekeepingTasks'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
       queryClient.invalidateQueries({ queryKey: ['rooms'] });
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: async (taskId: number) => {
+      const res = await fetch(`/api/housekeeping/${taskId}`, {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to delete task');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['housekeepingTasks'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+      queryClient.invalidateQueries({ queryKey: ['rooms'] });
+      alert('Housekeeping task deleted successfully');
     },
     onError: (err: any) => alert(err.message)
   });
@@ -212,10 +236,25 @@ export default function HousekeepingPage() {
                              Mark Clean
                            </Button>
                          )}
-                         {task.status !== 'dirty' && task.status !== 'in_progress' && (
-                           <Button size="sm" variant="ghost" disabled>Completed</Button>
-                         )}
-                      </TableCell>
+                          {task.status !== 'dirty' && task.status !== 'in_progress' && (
+                            <Button size="sm" variant="ghost" disabled>Completed</Button>
+                          )}
+                          {user?.role !== 'agent' && (
+                            <Button 
+                              size="sm" 
+                              variant="ghost" 
+                              className="text-red-500 hover:text-red-600 h-8 w-8 p-0" 
+                              onClick={() => {
+                                if (confirm(`Are you sure you want to delete the housekeeping task for Room ${task.roomNumber}?`)) {
+                                  deleteTaskMutation.mutate(task.id);
+                                }
+                              }}
+                              disabled={deleteTaskMutation.isPending}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                       </TableCell>
                     </TableRow>
                   ))
                 )}

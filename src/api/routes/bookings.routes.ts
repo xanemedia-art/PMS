@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { bookings, rooms, housekeepingTasks, users, plans } from '../../db/schema.js';
+import { bookings, rooms, housekeepingTasks, users, plans, invoices, restaurantOrders, guestChats } from '../../db/schema.js';
 import { eq, and, gte, lte, lt, gt, ne } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
@@ -284,12 +284,61 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
             assignedRoomId = freeRoom.id;
             await db.update(bookings).set({ roomId: assignedRoomId }).where(eq(bookings.id, id));
         }
-
-        await db.update(rooms).set({ status: 'occupied' }).where(eq(rooms.id, assignedRoomId));
+        const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
+        await db.update(rooms).set({ status: 'occupied', guestPin: randomPin }).where(eq(rooms.id, assignedRoomId));
     }
     res.json(updated[0]);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update booking status' });
+  }
+});
+
+// Delete a booking
+router.delete('/:id', requireRole(['admin', 'manager']), async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+
+    if (isNaN(id)) {
+      res.status(400).json({ error: 'Invalid booking ID' });
+      return;
+    }
+
+    await db.transaction(async (tx) => {
+      // 1. Fetch booking to check status and room
+      const bookingRecord = await tx.select().from(bookings).where(and(eq(bookings.id, id), eq(bookings.hotelId, hotelId))).limit(1);
+      if (bookingRecord.length === 0) {
+        throw new Error('Booking not found');
+      }
+
+      const booking = bookingRecord[0];
+
+      // 2. If checked in, free up the room and clear PIN
+      if (booking.status === 'checked_in' && booking.roomId) {
+        await tx.update(rooms).set({ status: 'available', guestPin: null }).where(eq(rooms.id, booking.roomId));
+      }
+
+      // 3. Delete invoices
+      await tx.delete(invoices).where(and(eq(invoices.bookingId, id), eq(invoices.hotelId, hotelId)));
+
+      // 4. Delete restaurant orders
+      await tx.delete(restaurantOrders).where(and(eq(restaurantOrders.bookingId, id), eq(restaurantOrders.hotelId, hotelId)));
+
+      // 5. Delete guest chats
+      await tx.delete(guestChats).where(and(eq(guestChats.bookingId, id), eq(guestChats.hotelId, hotelId)));
+
+      // 6. Delete the booking itself
+      await tx.delete(bookings).where(and(eq(bookings.id, id), eq(bookings.hotelId, hotelId)));
+    });
+
+    res.json({ success: true, message: 'Booking and all associated records deleted successfully' });
+  } catch (error: any) {
+    console.error('Delete booking error:', error);
+    if (error.message === 'Booking not found') {
+      res.status(404).json({ error: 'Booking not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to delete booking' });
+    }
   }
 });
 
