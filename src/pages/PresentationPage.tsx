@@ -212,7 +212,7 @@ export default function PresentationPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [currentSlide]);
 
-  const slideCount = 16;
+  const slideCount = 17;
 
   const nextSlide = () => {
     if (currentSlide < slideCount - 1) {
@@ -429,7 +429,8 @@ export default function PresentationPage() {
     { name: '13. Safe Deletions', desc: 'Clean UI & Data', icon: Trash2 },
     { name: '14. Seamless Onboarding', desc: 'Rapid Deployment', icon: Settings },
     { name: '15. Flexible Pricing', desc: 'Discovery & Quotation', icon: DollarSign },
-    { name: '16. Connect & Pitch', desc: 'Schedule Demo', icon: Play },
+    { name: '16. Startup Stats', desc: 'Growth & Metrics', icon: TrendingUp },
+    { name: '17. Connect & Pitch', desc: 'Schedule Demo', icon: Play },
   ];
 
   // Render slides dynamically
@@ -1870,7 +1871,78 @@ export default function PresentationPage() {
           </div>
         );
 
-      case 15: // Slide 16: Call to Action / Pitch Wrap-up
+      case 15: // Slide 16: Startup Stats
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center h-full max-w-5xl mx-auto py-4">
+            <div className="lg:col-span-5 space-y-6 text-left">
+              <h2 className="text-3xl lg:text-4xl font-extrabold text-slate-900">
+                Traction & Growth
+              </h2>
+              <p className="text-sm text-slate-650 leading-relaxed">
+                We've built Xane PMS with extreme capital efficiency. Through robust modern cloud architecture, our core running costs are virtually zero.
+              </p>
+              
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="p-4 bg-emerald-50 border border-emerald-100 rounded-2xl flex flex-col justify-center shadow-sm">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Development Cost</span>
+                  <span className="text-2xl font-black text-emerald-600">₹0</span>
+                </div>
+                <div className="p-4 bg-blue-50 border border-blue-100 rounded-2xl flex flex-col justify-center shadow-sm">
+                  <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">Running Cost</span>
+                  <span className="text-2xl font-black text-blue-600">₹0</span>
+                </div>
+              </div>
+            </div>
+            
+            <div className="lg:col-span-7 flex justify-center">
+              <div className="p-6 rounded-2xl border border-slate-200 bg-white shadow-xl w-full max-w-md relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-24 h-24 bg-purple-500/10 rounded-full blur-2xl"></div>
+                <div className="flex justify-between items-center border-b border-slate-100 pb-3 mb-4">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-purple-100 text-purple-600 rounded-lg">
+                      <Award className="w-4 h-4" />
+                    </div>
+                    <span className="text-xs font-extrabold text-slate-800">Latest Client Onboarded</span>
+                  </div>
+                  <span className="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-100 px-2 py-1 rounded-md">Sat, 23 May</span>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="flex items-center gap-4">
+                    <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-600 font-bold text-lg border border-slate-200">
+                      FH
+                    </div>
+                    <div>
+                      <h4 className="font-extrabold text-slate-800">Faraz Hashmi</h4>
+                      <p className="text-xs text-slate-500 font-medium">Fyra Group</p>
+                    </div>
+                  </div>
+                  
+                  <div className="p-4 bg-slate-50 border border-slate-100 rounded-xl space-y-3">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Amount Paid</span>
+                      <span className="font-black text-emerald-600 text-xl">₹54,000</span>
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-semibold italic text-right -mt-2">Upfront Yearly Cost</div>
+                    
+                    <div className="border-t border-slate-200/60 pt-3">
+                      <div className="flex items-start gap-2.5">
+                        <div className="mt-0.5 w-4 h-4 bg-emerald-100 rounded-full flex items-center justify-center shrink-0">
+                          <Check className="w-2.5 h-2.5 text-emerald-600" />
+                        </div>
+                        <p className="text-xs text-slate-600 font-medium leading-relaxed">
+                          Opted in for <span className="font-bold text-slate-800">Complete Social Media Optimization</span>. Quote includes an additional <span className="font-bold text-purple-600 bg-purple-50 px-1 rounded">10% fixed commission</span> on every sale for 1 year.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+
+      case 16: // Slide 17: Call to Action / Pitch Wrap-up
         return (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center h-full max-w-5xl mx-auto py-4">
             <div className="lg:col-span-6 space-y-6 text-left">
