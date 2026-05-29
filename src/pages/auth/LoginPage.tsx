@@ -1,18 +1,43 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link, useParams } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function LoginPage() {
+  const { slug } = useParams<{ slug: string }>();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [hotelName, setHotelName] = useState('Xane PMS');
+  const [checkingHotel, setCheckingHotel] = useState(false);
   
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  // Fetch hotel by slug if slug is in URL to customize branding
+  React.useEffect(() => {
+    if (slug) {
+      setCheckingHotel(true);
+      fetch(`/api/public/hotel/s/${slug}`)
+        .then(res => {
+          if (!res.ok) throw new Error('Property not found');
+          return res.json();
+        })
+        .then(data => {
+          if (data && data.hotel) {
+            setHotelName(data.hotel.name);
+          }
+          setCheckingHotel(false);
+        })
+        .catch(err => {
+          console.error(err);
+          setCheckingHotel(false);
+        });
+    }
+  }, [slug]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -23,7 +48,7 @@ export default function LoginPage() {
       const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, hotelSlug: slug || undefined }),
       });
 
       const data = await response.json();
@@ -45,8 +70,10 @@ export default function LoginPage() {
     <div className="min-h-screen bg-slate-50 flex flex-col justify-center items-center p-4">
       <div className="w-full max-w-md">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold tracking-tight text-slate-900">Xane PMS</h1>
-          <p className="text-slate-500 mt-2">Manage your hotel operations seamlessly</p>
+          <h1 className="text-3xl font-bold tracking-tight text-slate-900">{hotelName}</h1>
+          <p className="text-slate-500 mt-2">
+            {slug ? 'Property Portal Access' : 'Manage your hotel operations seamlessly'}
+          </p>
         </div>
         
         <Card className="w-full shadow-lg border-0">
@@ -77,7 +104,7 @@ export default function LoginPage() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-sm font-medium leading-none" htmlFor="password">Password</label>
-                  <a href="#" className="text-sm font-medium text-blue-600 hover:text-blue-500">Forgot password?</a>
+                  <Link to="/forgot-password" className="text-sm font-medium text-blue-600 hover:text-blue-500">Forgot password?</Link>
                 </div>
                 <Input 
                   id="password" 
@@ -97,14 +124,6 @@ export default function LoginPage() {
         </Card>
       </div>
       
-      {/* Sample Credentials Helper for Testing */}
-      <div className="mt-8 text-sm text-slate-500 bg-white p-4 rounded-lg shadow-sm w-full max-w-md border border-slate-200">
-        <p className="font-semibold mb-2">Demo Credentials (Need to seed DB first):</p>
-        <ul className="space-y-1 list-disc list-inside">
-          <li>Admin: admin@hotel.com / admin123</li>
-          <li>Agent: agent@travel.com / agent123</li>
-        </ul>
-      </div>
     </div>
   );
 }

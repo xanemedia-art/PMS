@@ -65,6 +65,17 @@ export default function BookingsPage() {
     refetchInterval: 60000, // Sync plans every minute
   });
 
+  const { data: myPricing = [] } = useQuery({
+    queryKey: ['myPricing'],
+    queryFn: async () => {
+      const res = await fetch('/api/agents/my-pricing', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to fetch my pricing overrides');
+      return res.json();
+    },
+    enabled: user?.role === 'agent',
+    staleTime: 60000,
+  });
+
   const loading = bookingsLoading || roomsLoading || plansLoading;
 
   const availabilityRows = useMemo(() => {
@@ -137,10 +148,18 @@ export default function BookingsPage() {
     const map: any = {};
     rooms.forEach((r: any) => {
       if (r.roomTypeId && !map[r.roomTypeId]) {
+        let displayPrice = r.price;
+        if (user?.role === 'agent' && myPricing && myPricing.length > 0) {
+          const override = myPricing.find((p: any) => p.roomTypeId === r.roomTypeId);
+          if (override) {
+            displayPrice = override.price;
+          }
+        }
+
         map[r.roomTypeId] = { 
           id: r.roomTypeId, 
           name: r.roomType?.name || r.roomType || 'Unknown', 
-          price: r.price,
+          price: displayPrice,
           capacity: r.capacity || 2,
           imageUrl: r.imageUrl,
           images: (() => { try { return r.images ? JSON.parse(r.images) : []; } catch { return []; } })(),
@@ -150,7 +169,7 @@ export default function BookingsPage() {
       }
     });
     return Object.values(map);
-  }, [rooms]);
+  }, [rooms, myPricing, user]);
 
   // Mutations
   const createBookingMutation = useMutation({
@@ -382,7 +401,7 @@ export default function BookingsPage() {
                   roomTypeId: formData.roomTypeId ? parseInt(formData.roomTypeId) : null,
                   roomCount: parseInt(formData.roomCount),
                   planId: formData.planId ? parseInt(formData.planId) : null,
-                  agentCommission: formData.agentCommission ? parseFloat(formData.agentCommission) : null
+                  agentCommission: null
                 });
               }} className="px-8 py-6 space-y-8 bg-white">
                 
@@ -437,7 +456,11 @@ export default function BookingsPage() {
                       <Label htmlFor="roomTypeId" className="text-xs font-bold uppercase tracking-wider text-slate-400">Category</Label>
                       <select id="roomTypeId" value={formData.roomTypeId} onChange={(e) => setFormData({ ...formData, roomTypeId: e.target.value })} required className="flex h-10 w-full rounded-md border-none bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
                         <option value="" disabled>Select Type</option>
-                        {uniqueRoomTypes.map((type: any) => <option key={type.id} value={type.id}>{type.name}</option>)}
+                        {uniqueRoomTypes.map((type: any) => (
+                          <option key={type.id} value={type.id}>
+                            {type.name} - ₹{type.price.toLocaleString('en-IN')}
+                          </option>
+                        ))}
                       </select>
                     </div>
                     <div className="space-y-1.5">
@@ -491,13 +514,6 @@ export default function BookingsPage() {
                     </div>
                   ))}
                 </div>
-
-                {user?.role === 'agent' && (
-                  <div className="bg-amber-50 p-4 rounded-xl border border-amber-100 space-y-2">
-                    <Label htmlFor="commission" className="text-xs font-bold uppercase tracking-wider text-amber-600">Agent Commission (₹)</Label>
-                    <Input id="commission" type="number" placeholder="Enter amount" value={formData.agentCommission} onChange={(e) => setFormData({ ...formData, agentCommission: e.target.value })} required className="bg-white border-none focus-visible:ring-amber-500" />
-                  </div>
-                )}
 
                 <div className="flex gap-3 pt-4">
                   <Button type="button" variant="ghost" onClick={() => setIsDialogOpen(false)} className="flex-1 text-slate-400 hover:text-slate-600">Discard</Button>

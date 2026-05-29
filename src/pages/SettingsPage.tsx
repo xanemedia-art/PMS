@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { User, Hotel, Database, Users, Trash2, Plus, Save, Key, AlertCircle } from 'lucide-react';
+import { User, Hotel, Database, Users, Trash2, Plus, Save, Key, AlertCircle, CreditCard, CheckCircle2 } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function SettingsPage() {
@@ -46,6 +46,107 @@ export default function SettingsPage() {
   const [isPlanDialogOpen, setIsPlanDialogOpen] = useState(false);
   const [planData, setPlanData] = useState({ name: '', price: '' });
   const [isUploading, setIsUploading] = useState(false);
+
+  // Subscription State
+  const { data: subscription = null, isLoading: subLoading } = useQuery({
+    queryKey: ['subscription'],
+    queryFn: async () => {
+      const res = await fetch('/api/subscription/status', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to fetch subscription status');
+      return res.json();
+    },
+  });
+
+  const [paying, setPaying] = useState(false);
+
+  const handlePaySubscription = async () => {
+    setPaying(true);
+    try {
+      // 1. Create Razorpay order on backend
+      const orderRes = await fetch('/api/subscription/create-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+
+      if (!orderRes.ok) {
+        throw new Error('Failed to create payment order');
+      }
+
+      const orderData = await orderRes.json();
+
+      // 2. Load Razorpay script dynamically
+      const loadScript = (src: string) => {
+        return new Promise((resolve) => {
+          const script = document.createElement('script');
+          script.src = src;
+          script.onload = () => resolve(true);
+          script.onerror = () => resolve(false);
+          document.body.appendChild(script);
+        });
+      };
+
+      const isScriptLoaded = await loadScript('https://checkout.razorpay.com/v1/checkout.js');
+      if (!isScriptLoaded) {
+        alert('Razorpay payment gateway failed to load. Check your internet connection.');
+        setPaying(false);
+        return;
+      }
+
+      // 3. Configure Razorpay options
+      const options = {
+        key: subscription.razorpayKeyId,
+        amount: orderData.amount,
+        currency: orderData.currency,
+        name: 'Xane PMS',
+        description: `PMS Subscription renewal for ${subscription.name}`,
+        order_id: orderData.id,
+        handler: async function (response: any) {
+          // 4. Verify payment on backend
+          try {
+            const verifyRes = await fetch('/api/subscription/verify-payment', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature
+              })
+            });
+
+            if (!verifyRes.ok) {
+              throw new Error('Payment verification failed');
+            }
+
+            alert('✓ Payment Successful! Your subscription is active now.');
+            queryClient.invalidateQueries({ queryKey: ['subscription'] });
+            window.location.reload();
+          } catch (err: any) {
+            alert(err.message || 'Payment verification failed. Please contact support.');
+          }
+        },
+        prefill: {
+          name: user?.name,
+          email: user?.email
+        },
+        theme: {
+          color: '#0f172a' // slate-900 cosmic dark
+        }
+      };
+
+      const paymentObject = new (window as any).Razorpay(options);
+      paymentObject.open();
+    } catch (err: any) {
+      alert(err.message || 'Failed to initialize payment');
+    } finally {
+      setPaying(false);
+    }
+  };
 
   // --- QUERIES ---
 
@@ -102,6 +203,109 @@ export default function SettingsPage() {
     },
     enabled: user?.role === 'admin',
   });
+
+  const { data: subscriptionData, refetch: refetchSubscription, isLoading: subscriptionLoading } = useQuery({
+    queryKey: ['subscriptionStatus'],
+    queryFn: async () => {
+      const res = await fetch('/api/subscription/status', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to fetch subscription status');
+      return res.json();
+    },
+  });
+
+  // Dynamic Razorpay checkout script loading on component mount
+  React.useEffect(() => {
+    if (!window.hasOwnProperty('Razorpay')) {
+      const script = document.createElement('script');
+      script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+      script.async = true;
+      document.body.appendChild(script);
+      return () => {
+        if (document.body.contains(script)) {
+          document.body.removeChild(script);
+        }
+      };
+    }
+  }, []);
+
+  const handlePayRenew = async () => {
+    try {
+      const res = await fetch('/api/subscription/create-order', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          amount: subscriptionData?.subscriptionDues || 6000
+        })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'Failed to create payment order');
+      }
+
+      const orderData = await res.json();
+
+      const options = {
+        key: 'rzp_live_SufeFLg6s8EJfH',
+        amount: orderData.amount * 100, // in paise
+        currency: orderData.currency,
+        name: 'PMS Subscription',
+        description: `Subscription Renewal for ${hotelsList.find((h: any) => h.id === user?.hotelId)?.name || 'Property'}`,
+        order_id: orderData.orderId,
+        handler: async function (response: any) {
+          try {
+            const verifyRes = await fetch('/api/subscription/verify-payment', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${token}`
+              },
+              body: JSON.stringify({
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_signature: response.razorpay_signature
+              })
+            });
+
+            if (!verifyRes.ok) {
+              const err = await verifyRes.json();
+              throw new Error(err.error || 'Payment verification failed');
+            }
+
+            alert('Subscription payment successfully verified and activated!');
+            refetchSubscription();
+            queryClient.invalidateQueries({ queryKey: ['hotels'] });
+            window.location.reload();
+          } catch (error: any) {
+            alert('Verification Error: ' + error.message);
+          }
+        },
+        prefill: {
+          name: user?.name || '',
+          email: user?.email || '',
+        },
+        theme: {
+          color: '#2563EB',
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.open();
+    } catch (error: any) {
+      alert('Payment Error: ' + error.message);
+    }
+  };
+
+  const getDaysLeft = (endsAtStr: string | null) => {
+    if (!endsAtStr) return 0;
+    const endsAt = new Date(endsAtStr);
+    const diffTime = endsAt.getTime() - new Date().getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays > 0 ? diffDays : 0;
+  };
 
   // --- MUTATIONS ---
 
@@ -296,6 +500,11 @@ export default function SettingsPage() {
   // Helper to get room type name
   const getRoomTypeName = (id: number) => roomTypes.find((t: any) => t.id === id)?.name || 'Unknown';
 
+  const [activeTab, setActiveTab] = useState(() => {
+    const searchParams = new URLSearchParams(window.location.search);
+    return searchParams.get('tab') || 'profile';
+  });
+
   return (
     <div className="space-y-6">
       <div>
@@ -303,13 +512,14 @@ export default function SettingsPage() {
         <p className="text-slate-500 mt-1">Configure your profile, hotel, and team.</p>
       </div>
 
-      <Tabs defaultValue="profile" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="bg-slate-100/50 p-1 border border-slate-200">
           <TabsTrigger value="profile" className="gap-2"><User className="w-4 h-4" /> Profile</TabsTrigger>
           {(user?.role === 'admin' || user?.role === 'manager') && (
             <>
               <TabsTrigger value="hotel" className="gap-2"><Hotel className="w-4 h-4" /> Properties</TabsTrigger>
               <TabsTrigger value="inventory" className="gap-2"><Database className="w-4 h-4" /> Inventory</TabsTrigger>
+              <TabsTrigger value="billing" className="gap-2"><CreditCard className="w-4 h-4" /> Subscription & Billing</TabsTrigger>
             </>
           )}
           {user?.role === 'admin' && (
@@ -704,6 +914,140 @@ export default function SettingsPage() {
                   </TableBody>
                 </Table>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* SUBSCRIPTION & BILLING TAB */}
+        <TabsContent value="billing">
+          <Card className="border-slate-200 shadow-sm overflow-hidden">
+            <CardHeader className="bg-slate-50/50 border-b border-slate-100">
+              <CardTitle>Subscription & Billing</CardTitle>
+              <CardDescription>Manage your property's subscription status, payments, and invoices.</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-6">
+              {subscriptionLoading ? (
+                <div className="text-center py-6 text-slate-500">Loading subscription details...</div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <Card className="border-slate-150 shadow-none bg-slate-50/50">
+                      <CardContent className="pt-6">
+                        <div className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">Current Plan</div>
+                        <div className="text-2xl font-bold text-slate-900">₹6,000<span className="text-sm font-normal text-slate-500">/month</span></div>
+                        <div className="text-xs text-slate-400 mt-1">Per property subscription plan</div>
+                      </CardContent>
+                    </Card>
+
+                    <Card className="border-slate-150 shadow-none bg-slate-50/50">
+                      <CardContent className="pt-6">
+                        <div className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">Subscription Status</div>
+                        <div className="flex items-center gap-2">
+                          <Badge 
+                            variant={
+                              subscriptionData?.subscriptionStatus === 'active' 
+                                ? 'default' 
+                                : subscriptionData?.subscriptionStatus === 'trialing'
+                                ? 'outline'
+                                : 'destructive'
+                            }
+                            className={`font-bold capitalize ${
+                              subscriptionData?.subscriptionStatus === 'active' 
+                                ? 'bg-emerald-600 hover:bg-emerald-600 text-white' 
+                                : subscriptionData?.subscriptionStatus === 'trialing'
+                                ? 'bg-indigo-600 hover:bg-indigo-600 text-white'
+                                : 'bg-rose-600 hover:bg-rose-600 text-white'
+                            }`}
+                          >
+                            {subscriptionData?.subscriptionStatus || 'trialing'}
+                          </Badge>
+                          {subscriptionData?.subscriptionEndsAt && (
+                            <span className="text-sm font-medium text-slate-600">
+                              ({getDaysLeft(subscriptionData.subscriptionEndsAt)} days left)
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-2">
+                          {subscriptionData?.subscriptionEndsAt 
+                            ? `Renews/Expires: ${new Date(subscriptionData.subscriptionEndsAt).toLocaleDateString('en-IN', { dateStyle: 'medium' })}`
+                            : 'No renewal date set'}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card className="border-slate-150 shadow-none bg-slate-50/50">
+                      <CardContent className="pt-6">
+                        <div className="text-sm font-semibold text-slate-500 uppercase tracking-wider mb-2">Outstanding Dues</div>
+                        <div className="text-2xl font-bold text-rose-600">
+                          ₹{Number(subscriptionData?.subscriptionDues || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </div>
+                        <div className="text-xs text-slate-400 mt-1">Pending payments due for billing cycle</div>
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  <div className="flex justify-between items-center bg-blue-50/50 border border-blue-100 rounded-lg p-4">
+                    <div className="space-y-1">
+                      <div className="font-semibold text-blue-900">Renew or Pay Subscription</div>
+                      <div className="text-sm text-blue-700">Quick checkout via Razorpay to instantly activate or extend your active subscription.</div>
+                    </div>
+                    <Button onClick={handlePayRenew} className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm gap-2">
+                      <CreditCard className="w-4 h-4" /> Pay/Renew Subscription
+                    </Button>
+                  </div>
+
+                  {/* Sub-properties list */}
+                  <div className="space-y-3">
+                    <div className="text-lg font-bold text-slate-900">Sub-Properties & Branches</div>
+                    <p className="text-sm text-slate-500">Each sub-property is billed independently at the premium per-property flat rate.</p>
+                    <div className="border border-slate-200 rounded-lg overflow-hidden">
+                      <Table>
+                        <TableHeader className="bg-slate-50">
+                          <TableRow>
+                            <TableHead className="pl-6">Property Name</TableHead>
+                            <TableHead>Address</TableHead>
+                            <TableHead>Billing Status</TableHead>
+                            <TableHead>Days Left</TableHead>
+                            <TableHead className="text-right pr-6">Dues (INR)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {hotelsList.filter((h: any) => h.parentId === user?.hotelId).length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center py-6 text-slate-400 font-medium">
+                                No sub-properties linked to this parent account.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            hotelsList.filter((h: any) => h.parentId === user?.hotelId).map((sub: any) => (
+                              <TableRow key={sub.id}>
+                                <TableCell className="pl-6 font-semibold text-slate-800">{sub.name}</TableCell>
+                                <TableCell className="text-slate-500">{sub.address || 'N/A'}</TableCell>
+                                <TableCell>
+                                  <Badge 
+                                    variant={sub.subscriptionStatus === 'active' ? 'default' : 'destructive'}
+                                    className={`font-semibold capitalize ${
+                                      sub.subscriptionStatus === 'active' ? 'bg-emerald-600' : 'bg-rose-600'
+                                    }`}
+                                  >
+                                    {sub.subscriptionStatus || 'trialing'}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-slate-600 font-medium">
+                                  {sub.subscriptionEndsAt ? `${getDaysLeft(sub.subscriptionEndsAt)} days` : 'N/A'}
+                                </TableCell>
+                                <TableCell className="text-right pr-6 font-bold text-slate-800">
+                                  ₹{Number(sub.subscriptionDues || 0).toLocaleString('en-IN')}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

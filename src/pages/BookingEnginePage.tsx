@@ -33,7 +33,8 @@ interface HotelInfo {
 }
 
 export default function BookingEnginePage() {
-  const { hotelId } = useParams<{ hotelId: string }>();
+  const { hotelId, slug } = useParams<{ hotelId?: string; slug?: string }>();
+  const [resolvedHotelId, setResolvedHotelId] = useState<string | null>(null);
   const [hotel, setHotel] = useState<HotelInfo | null>(null);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -55,11 +56,29 @@ export default function BookingEnginePage() {
       .catch(err => console.error("Failed to fetch hotels", err));
   }, []);
 
+  // Resolve hotel ID by slug or ID
   useEffect(() => {
-    if (hotelId) {
-      setSelectedPropertyId(parseInt(hotelId));
+    if (slug) {
+      fetch(`/api/public/hotel/s/${slug}`)
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.hotel) {
+            setResolvedHotelId(data.hotel.id.toString());
+            setHotel(data.hotel);
+            if (data.plans) setPlans(data.plans);
+          }
+        })
+        .catch(err => console.error("Failed to resolve hotel slug", err));
+    } else if (hotelId) {
+      setResolvedHotelId(hotelId);
     }
-  }, [hotelId]);
+  }, [hotelId, slug]);
+
+  useEffect(() => {
+    if (resolvedHotelId) {
+      setSelectedPropertyId(parseInt(resolvedHotelId));
+    }
+  }, [resolvedHotelId]);
   
   const [loading, setLoading] = useState(false);
   const [selectedRooms, setSelectedRooms] = useState<{ [key: string]: { count: number, planId: number | null, pax: number } }>({});
@@ -70,13 +89,18 @@ export default function BookingEnginePage() {
   const [specialRequests, setSpecialRequests] = useState('');
   const [bookingSuccess, setBookingSuccess] = useState(false);
   
+  // Checkout Dialog Wizard States
+  const [isBookingDialogOpen, setIsBookingDialogOpen] = useState(false);
+  const [dialogStep, setDialogStep] = useState(1);
+  
   // Lightbox & Details State
   const [lightboxData, setLightboxData] = useState<{ images: string[], index: number } | null>(null);
   const [detailsData, setDetailsData] = useState<any>(null);
 
   useEffect(() => {
+    if (!resolvedHotelId) return;
     const fetchHotel = () => {
-      fetch(`/api/public/hotel/${hotelId}`)
+      fetch(`/api/public/hotel/${resolvedHotelId}`)
         .then(res => res.json())
         .then(data => {
           if (data.hotel) setHotel(data.hotel);
@@ -88,12 +112,13 @@ export default function BookingEnginePage() {
     fetchHotel();
     const interval = setInterval(fetchHotel, 30000); // Poll every 30 seconds
     return () => clearInterval(interval);
-  }, [hotelId]);
+  }, [resolvedHotelId]);
 
   const searchAvailability = async () => {
+    if (!resolvedHotelId) return;
     setLoading(true);
     try {
-      const res = await fetch(`/api/public/hotel/${hotelId}/availability?checkInDate=${checkIn}&checkOutDate=${checkOut}`);
+      const res = await fetch(`/api/public/hotel/${resolvedHotelId}/availability?checkInDate=${checkIn}&checkOutDate=${checkOut}`);
       const data = await res.json();
       if (Array.isArray(data)) {
         setRoomTypes(data.map((item: any) => ({
@@ -111,10 +136,10 @@ export default function BookingEnginePage() {
   };
 
   useEffect(() => {
-    if (hotelId) {
+    if (resolvedHotelId) {
       searchAvailability();
     }
-  }, [hotelId, checkIn, checkOut]);
+  }, [resolvedHotelId, checkIn, checkOut]);
 
   const handleAddRoom = (roomId: string) => {
     const rt = roomTypes.find(r => r.id === roomId);
@@ -173,7 +198,7 @@ export default function BookingEnginePage() {
         
         const extraBeds = Math.max(0, (selectedRooms[roomId].pax - rt.capacity));
         
-        const res = await fetch(`/api/public/hotel/${hotelId}/book`, {
+        const res = await fetch(`/api/public/hotel/${resolvedHotelId}/book`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -346,6 +371,277 @@ export default function BookingEnginePage() {
                     <span className="text-3xl font-black text-slate-900">₹{detailsData.price.toLocaleString('en-IN')}</span>
                   </div>
                 </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Booking Wizard Dialog */}
+      <AnimatePresence>
+        {isBookingDialogOpen && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setIsBookingDialogOpen(false)}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="bg-white rounded-[2.5rem] shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-100 flex flex-col max-h-[90vh]"
+              onClick={e => e.stopPropagation()}
+            >
+              {/* Header */}
+              <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <div>
+                  <h2 className="text-2xl font-black text-slate-900">Complete Your Reservation</h2>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">
+                    Step {dialogStep} of 3: {dialogStep === 1 ? 'Review Stay' : dialogStep === 2 ? 'Guest Details' : 'Confirm'}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => setIsBookingDialogOpen(false)}
+                  className="p-2 hover:bg-slate-200 rounded-full transition-colors text-slate-400 hover:text-slate-600"
+                >
+                  <XCircle size={24} />
+                </button>
+              </div>
+
+              {/* Step indicator bar */}
+              <div className="w-full bg-slate-100 h-1 flex">
+                <div className={`h-full bg-blue-600 transition-all duration-300 ${dialogStep === 1 ? 'w-1/3' : dialogStep === 2 ? 'w-2/3' : 'w-full'}`} />
+              </div>
+
+              {/* Scrollable Content */}
+              <div className="p-8 overflow-y-auto flex-1 space-y-6">
+                {dialogStep === 1 && (
+                  <div className="space-y-6">
+                    <h3 className="text-lg font-bold text-slate-800">Your Selections</h3>
+                    
+                    <div className="space-y-4">
+                      {Object.keys(selectedRooms).map(roomId => {
+                        const rt = roomTypes.find(r => r.id === roomId);
+                        if (!rt) return null;
+                        const plan = plans.find(p => p.id === selectedRooms[roomId].planId);
+                        const unitPrice = rt.price * (plan?.priceMultiplier || 1.0);
+                        
+                        return (
+                          <div key={roomId} className="bg-slate-50 p-6 rounded-2xl border border-slate-100 space-y-4">
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <h4 className="font-bold text-base text-slate-900">{rt.name}</h4>
+                                <p className="text-xs text-slate-500 mt-1 font-semibold">
+                                  {selectedRooms[roomId].count} x Room(s) for {nightsNum} night(s)
+                                </p>
+                              </div>
+                              <span className="font-black text-lg text-slate-900">
+                                ₹{(unitPrice * selectedRooms[roomId].count * nightsNum).toLocaleString('en-IN')}
+                              </span>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Meal Plan</label>
+                                <select 
+                                  value={selectedRooms[roomId].planId || ''} 
+                                  onChange={(e) => setSelectedRooms(prev => ({ ...prev, [roomId]: { ...prev[roomId], planId: parseInt(e.target.value) } }))}
+                                  className="w-full bg-white border border-slate-200 h-10 px-3 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all text-xs"
+                                >
+                                  {plans.map(p => (
+                                    <option key={p.id} value={p.id}>
+                                      {p.name} {p.priceMultiplier > 1 ? `(+${((p.priceMultiplier - 1) * 100).toFixed(0)}%)` : '(Base)'}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+
+                              <div className="space-y-2">
+                                <label className="text-[10px] uppercase font-black text-slate-400 tracking-widest ml-1">Guests</label>
+                                <div className="flex items-center gap-2 bg-white border border-slate-200 p-1 rounded-xl h-10">
+                                  <button 
+                                    onClick={() => {
+                                      if (selectedRooms[roomId].pax > 1) {
+                                        setSelectedRooms(prev => ({ ...prev, [roomId]: { ...prev[roomId], pax: prev[roomId].pax - 1 } }));
+                                      }
+                                    }} 
+                                    className="w-8 h-8 flex items-center justify-center hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"
+                                  >
+                                    <ChevronRight size={14} className="rotate-180" />
+                                  </button>
+                                  <span className="flex-1 text-center font-bold text-xs text-slate-700">{selectedRooms[roomId].pax}</span>
+                                  <button 
+                                    onClick={() => {
+                                      setSelectedRooms(prev => ({ ...prev, [roomId]: { ...prev[roomId], pax: prev[roomId].pax + 1 } }));
+                                    }} 
+                                    className="w-8 h-8 flex items-center justify-center hover:bg-slate-100 rounded-lg text-slate-500 transition-colors"
+                                  >
+                                    <ChevronRight size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="bg-slate-900 p-6 rounded-2xl text-white flex justify-between items-center">
+                      <div>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Stay Dates</p>
+                        <p className="font-bold text-sm mt-1">{format(new Date(checkIn), 'MMM dd, yyyy')} to {format(new Date(checkOut), 'MMM dd, yyyy')}</p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Estimated Total</p>
+                        <p className="font-black text-2xl text-blue-400 font-sans">₹{calculateTotal().toLocaleString('en-IN')}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {dialogStep === 2 && (
+                  <div className="space-y-4">
+                    <h3 className="text-lg font-bold text-slate-800">Guest Contact Info</h3>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 ml-1">Full Name</label>
+                        <div className="relative">
+                          <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                          <input 
+                            value={guestName} 
+                            onChange={e => setGuestName(e.target.value)} 
+                            placeholder="Enter your full name" 
+                            className="w-full bg-slate-50 border border-slate-200 h-12 pl-12 pr-4 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-sm" 
+                          />
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500 ml-1">Email Address</label>
+                          <div className="relative">
+                            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <input 
+                              type="email" 
+                              value={guestEmail} 
+                              onChange={e => setGuestEmail(e.target.value)} 
+                              placeholder="email@example.com" 
+                              className="w-full bg-slate-50 border border-slate-200 h-12 pl-12 pr-4 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-sm" 
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="text-xs font-bold text-slate-500 ml-1">Phone Number</label>
+                          <div className="relative">
+                            <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                            <input 
+                              value={guestPhone} 
+                              onChange={e => setGuestPhone(e.target.value)} 
+                              placeholder="+91 99999 99999" 
+                              className="w-full bg-slate-50 border border-slate-200 h-12 pl-12 pr-4 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-sm" 
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 ml-1">Special Requests (Optional)</label>
+                        <textarea 
+                          value={specialRequests} 
+                          onChange={e => setSpecialRequests(e.target.value)} 
+                          placeholder="e.g. Early check-in, high floor, extra pillows..." 
+                          className="w-full bg-slate-50 border border-slate-200 min-h-[100px] p-4 rounded-xl font-bold text-slate-700 outline-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-400 text-sm" 
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {dialogStep === 3 && (
+                  <div className="space-y-6">
+                    <h3 className="text-lg font-bold text-slate-800 text-center">Confirm Your Details</h3>
+                    
+                    <div className="bg-slate-50 rounded-2xl border border-slate-100 p-6 space-y-4">
+                      <div className="grid grid-cols-2 gap-y-3 text-sm">
+                        <span className="text-slate-500 font-medium">Guest Name:</span>
+                        <span className="text-slate-900 font-bold text-right">{guestName}</span>
+                        
+                        <span className="text-slate-500 font-medium">Email:</span>
+                        <span className="text-slate-900 font-bold text-right">{guestEmail}</span>
+                        
+                        <span className="text-slate-500 font-medium">Phone:</span>
+                        <span className="text-slate-900 font-bold text-right">{guestPhone}</span>
+
+                        <span className="text-slate-500 font-medium">Dates:</span>
+                        <span className="text-slate-900 font-bold text-right">
+                          {format(new Date(checkIn), 'MMM dd, yyyy')} - {format(new Date(checkOut), 'MMM dd, yyyy')}
+                        </span>
+                        
+                        <span className="text-slate-500 font-medium">Rooms:</span>
+                        <span className="text-slate-900 font-bold text-right">
+                          {Object.keys(selectedRooms).map(roomId => {
+                            const rt = roomTypes.find(r => r.id === roomId);
+                            return `${selectedRooms[roomId].count} x ${rt?.name || 'Room'}`;
+                          }).join(', ')}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="bg-blue-50 border border-blue-100 rounded-2xl p-6 text-center">
+                      <p className="text-xs uppercase tracking-wider font-black text-blue-600">Total Booking Price</p>
+                      <p className="text-4xl font-black text-blue-700 mt-2 font-sans">₹{calculateTotal().toLocaleString('en-IN')}</p>
+                      <p className="text-[10px] text-slate-400 mt-1 font-semibold">Taxes & fees included. Pay at the hotel.</p>
+                    </div>
+
+                    <div className="bg-green-50 text-green-700 text-xs font-semibold p-4 rounded-xl border border-green-100 flex items-center gap-3">
+                      <ShieldCheck size={18} className="text-green-600 shrink-0" />
+                      Free cancellation before 24 hours of your check-in date.
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="p-8 border-t border-slate-100 bg-slate-50 flex justify-between items-center gap-4">
+                {dialogStep > 1 ? (
+                  <button 
+                    onClick={() => setDialogStep(prev => prev - 1)}
+                    className="px-6 py-3 border border-slate-200 hover:border-slate-300 text-slate-600 font-bold rounded-xl text-sm transition-colors bg-white hover:bg-slate-50"
+                  >
+                    Back
+                  </button>
+                ) : (
+                  <div />
+                )}
+
+                {dialogStep < 3 ? (
+                  <button 
+                    onClick={() => {
+                      if (dialogStep === 2 && (!guestName || !guestEmail || !guestPhone)) {
+                        alert("Please fill in all guest contact details.");
+                        return;
+                      }
+                      setDialogStep(prev => prev + 1);
+                    }}
+                    className="px-8 py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-sm transition-colors shadow-lg"
+                  >
+                    Continue
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => {
+                      setIsBookingDialogOpen(false);
+                      handleBook();
+                    }}
+                    disabled={loading || !guestName || !guestEmail || !guestPhone}
+                    className="px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold rounded-xl text-sm transition-colors shadow-lg"
+                  >
+                    {loading ? 'Confirming...' : 'Secure My Sanctuary Now'}
+                  </button>
+                )}
               </div>
             </motion.div>
           </motion.div>
@@ -592,76 +888,24 @@ export default function BookingEnginePage() {
                 <motion.div 
                   initial={{ opacity: 0, y: 20 }} 
                   animate={{ opacity: 1, y: 0 }} 
-                  className="pt-8 border-t border-slate-800 space-y-8"
+                  className="pt-8 border-t border-slate-800 space-y-6"
                 >
                   <div className="flex justify-between items-end">
                     <div className="space-y-1">
                       <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Total Value</p>
-                      <p className="text-5xl font-black tracking-tighter">₹{calculateTotal().toLocaleString('en-IN')}</p>
+                      <p className="text-5xl font-black tracking-tighter font-sans">₹{calculateTotal().toLocaleString('en-IN')}</p>
                     </div>
                   </div>
 
-                  <div className="space-y-6 pt-6 border-t border-slate-800/50">
-                    <h4 className="text-xs font-black uppercase tracking-widest text-blue-500 mb-2">Guest Information</h4>
-                    <div className="space-y-4">
-                       <div className="space-y-2">
-                          <Label className="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1">Full Name</Label>
-                          <div className="relative">
-                             <User className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500" />
-                             <input 
-                               value={guestName} 
-                               onChange={e => setGuestName(e.target.value)} 
-                               placeholder="Enter your name" 
-                               className="w-full bg-slate-800 h-12 pl-12 pr-4 rounded-xl font-bold text-white outline-none border-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-600" 
-                             />
-                          </div>
-                       </div>
-                       <div className="grid grid-cols-1 gap-4">
-                          <div className="space-y-2">
-                             <Label className="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1">Email Address</Label>
-                             <div className="relative">
-                                <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500" />
-                                <input 
-                                  type="email" 
-                                  value={guestEmail} 
-                                  onChange={e => setGuestEmail(e.target.value)} 
-                                  placeholder="email@example.com" 
-                                  className="w-full bg-slate-800 h-12 pl-12 pr-4 rounded-xl font-bold text-white outline-none border-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-600" 
-                                />
-                             </div>
-                          </div>
-                          <div className="space-y-2">
-                             <Label className="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1">Phone Number</Label>
-                             <div className="relative">
-                                <Phone className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-blue-500" />
-                                <input 
-                                  value={guestPhone} 
-                                  onChange={e => setGuestPhone(e.target.value)} 
-                                  placeholder="+91 ..." 
-                                  className="w-full bg-slate-800 h-12 pl-12 pr-4 rounded-xl font-bold text-white outline-none border-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-600" 
-                                />
-                             </div>
-                          </div>
-                       </div>
-                       <div className="space-y-2">
-                          <Label className="text-[10px] uppercase font-black text-slate-500 tracking-widest ml-1">Special Requests</Label>
-                          <textarea 
-                            value={specialRequests} 
-                            onChange={e => setSpecialRequests(e.target.value)} 
-                            placeholder="Any special needs?" 
-                            className="w-full bg-slate-800 min-h-[100px] p-4 rounded-xl font-bold text-white outline-none border-none focus:ring-2 focus:ring-blue-500 transition-all placeholder:text-slate-600 text-sm" 
-                          />
-                       </div>
-                    </div>
-
-                    <button 
-                      onClick={handleBook}
-                      disabled={loading || !guestName || !guestEmail || !guestPhone}
-                      className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-800 disabled:text-slate-600 text-white py-5 rounded-[1.5rem] font-black text-lg transition-all shadow-xl active:scale-95 mt-4"
-                    >
-                      {loading ? 'Confirming Sanctuary...' : 'Secure My Sanctuary Now'}
-                    </button>
-                  </div>
+                  <button 
+                    onClick={() => {
+                      setDialogStep(1);
+                      setIsBookingDialogOpen(true);
+                    }}
+                    className="w-full bg-blue-600 hover:bg-blue-700 text-white py-5 rounded-[1.5rem] font-black text-lg transition-all shadow-xl active:scale-95 mt-4 flex items-center justify-center gap-2"
+                  >
+                    Proceed to Booking
+                  </button>
                 </motion.div>
               )}
             </section>

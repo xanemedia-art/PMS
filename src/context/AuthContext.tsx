@@ -6,6 +6,7 @@ type User = {
   email: string;
   role: string;
   hotelId: number;
+  features?: string;
 };
 
 type AuthContextType = {

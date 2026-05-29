@@ -124,13 +124,14 @@ router.get('/dashboard', async (req: AuthRequest, res) => {
     const topAgentsQuery = await db.select({
       name: users.name,
       bookingsCount: sql`count(${bookings.id})`.mapWith(Number),
-      totalCommission: sql`sum(${bookings.agentCommission})`.mapWith(Number),
+      totalRevenue: sql`sum(${invoices.totalAmount})`.mapWith(Number),
     })
     .from(bookings)
     .innerJoin(users, eq(bookings.bookedById, users.id))
+    .leftJoin(invoices, eq(bookings.id, invoices.bookingId))
     .where(and(eq(bookings.hotelId, hotelId), eq(users.role, 'agent')))
     .groupBy(users.id, users.name)
-    .orderBy(sql`sum(${bookings.agentCommission}) DESC`)
+    .orderBy(sql`coalesce(sum(${invoices.totalAmount}), 0) DESC`)
     .limit(5);
 
     res.json({
@@ -148,12 +149,68 @@ router.get('/dashboard', async (req: AuthRequest, res) => {
       topAgents: topAgentsQuery.map(a => ({
         name: a.name,
         bookings: a.bookingsCount,
-        commission: a.totalCommission || 0
+        commission: a.totalRevenue || 0 // Named commission in payload to keep frontend fallback compatibility
       }))
     });
   } catch (error) {
     console.error('Report generation error:', error);
     res.status(500).json({ error: 'Failed to generate report' });
+  }
+});
+
+// GET /api/reports/agents
+// Detailed report for all agents (bookings count, total revenue generated, and list of detailed bookings)
+router.get('/agents', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    
+    // Fetch all agents
+    const agents = await db.select({
+      id: users.id,
+      name: users.name,
+      email: users.email
+    })
+    .from(users)
+    .where(and(eq(users.hotelId, hotelId), eq(users.role, 'agent')));
+    
+    const reports = await Promise.all(agents.map(async (agent) => {
+      // Find all bookings for this agent
+      const agentBookings = await db.select({
+        id: bookings.id,
+        guestName: bookings.guestName,
+        checkInDate: bookings.checkInDate,
+        checkOutDate: bookings.checkOutDate,
+        status: bookings.status,
+        roomCount: bookings.roomCount,
+        roomTypeName: roomTypes.name,
+        totalAmount: invoices.totalAmount
+      })
+      .from(bookings)
+      .leftJoin(roomTypes, eq(bookings.roomTypeId, roomTypes.id))
+      .leftJoin(invoices, eq(bookings.id, invoices.bookingId))
+      .where(and(
+        eq(bookings.hotelId, hotelId),
+        eq(bookings.bookedById, agent.id)
+      ))
+      .orderBy(bookings.checkInDate);
+
+      const totalBookings = agentBookings.length;
+      const totalRevenue = agentBookings.reduce((sum, b) => sum + (Number(b.totalAmount) || 0), 0);
+      
+      return {
+        agentId: agent.id,
+        name: agent.name,
+        email: agent.email,
+        totalBookings,
+        totalRevenue,
+        bookings: agentBookings
+      };
+    }));
+
+    res.json(reports);
+  } catch (error) {
+    console.error('Failed to generate agent report:', error);
+    res.status(500).json({ error: 'Failed to generate travel agents report' });
   }
 });
 

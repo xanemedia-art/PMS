@@ -16,12 +16,16 @@ import settingsRoutes from './src/api/routes/settings.routes.js';
 import publicRoutes from './src/api/routes/public.routes.js';
 import guestRoutes from './src/api/routes/guest.routes.js';
 import restaurantRoutes from './src/api/routes/restaurant.routes.js';
+import superAdminRoutes from './src/api/routes/super-admin.routes.js';
+import subscriptionRoutes from './src/api/routes/subscription.routes.js';
+import { checkSubscription } from './src/api/middleware/subscription.middleware.js';
 
 
 import multer from 'multer';
 import fs from 'fs';
 
 dotenv.config();
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -56,6 +60,7 @@ export async function createApp() {
   app.use(cors());
   app.use(express.json());
   app.use('/uploads', express.static(uploadDir));
+  app.use(checkSubscription);
 
   // File Upload API
   app.post('/api/upload', upload.single('file'), (req, res) => {
@@ -72,6 +77,11 @@ export async function createApp() {
   });
 
   app.use('/api/auth', authRoutes);
+  app.use('/api/subscription', subscriptionRoutes);
+
+  // Apply subscription check middleware for all PMS routes
+  app.use(checkSubscription);
+
   app.use('/api/bookings', bookingsRoutes);
   app.use('/api/rooms', roomsRoutes);
   app.use('/api/housekeeping', housekeepingRoutes);
@@ -83,6 +93,7 @@ export async function createApp() {
   app.use('/api/public', publicRoutes);
   app.use('/api/guest', guestRoutes);
   app.use('/api/restaurant', restaurantRoutes);
+  app.use('/api/super-admin', superAdminRoutes);
 
 
   // Vite middleware for development

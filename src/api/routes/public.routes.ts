@@ -1,7 +1,8 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { hotels, plans, roomTypes, rooms, bookings } from '../../db/schema.js';
+import { hotels, plans, roomTypes, rooms, bookings, users } from '../../db/schema.js';
 import { eq, and, ne, lt, gt, inArray } from 'drizzle-orm';
+import { sendEmail, getBookingConfirmationHtml } from '../utils/email.js';
 
 const router = express.Router();
 
@@ -42,6 +43,33 @@ router.get('/hotel/:hotelId', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch hotel data' });
+  }
+});
+
+// GET /api/public/hotel/s/:slug
+router.get('/hotel/s/:slug', async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    if (!slug) {
+      res.status(400).json({ error: 'Slug parameter is required' });
+      return;
+    }
+
+    const hotel = await db.select().from(hotels).where(eq(hotels.slug, slug)).limit(1);
+    if (!hotel || hotel.length === 0) {
+      res.status(404).json({ error: 'Property not found' });
+      return;
+    }
+
+    const hotelId = hotel[0].id;
+    const hotelPlans = await db.select().from(plans).where(eq(plans.hotelId, hotelId));
+
+    res.json({
+      hotel: hotel[0],
+      plans: hotelPlans
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch hotel data by slug' });
   }
 });
 
@@ -231,6 +259,66 @@ router.post('/hotel/:hotelId/book', async (req, res) => {
     }
 
     const newBookings = await db.insert(bookings).values(valuesToInsert).returning();
+
+    // Send email notifications asynchronously
+    if (newBookings.length > 0) {
+      const createdBooking = newBookings[0];
+      
+      // Run as IIFE to not block API response
+      (async () => {
+        try {
+          const hotelResult = await db.select().from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+          const hotelInfo = hotelResult[0] || { name: process.env.HOTEL_NAME || 'Hotel', address: process.env.HOTEL_ADDRESS || '' };
+          
+          let roomTypeName = 'Selected Room';
+          if (createdBooking.roomTypeId) {
+            const rtResult = await db.select().from(roomTypes).where(eq(roomTypes.id, createdBooking.roomTypeId)).limit(1);
+            if (rtResult.length > 0) {
+              roomTypeName = rtResult[0].name;
+            }
+          }
+
+          let planName = 'Standard Plan';
+          if (createdBooking.planId) {
+            const planResult = await db.select().from(plans).where(eq(plans.id, createdBooking.planId)).limit(1);
+            if (planResult.length > 0) {
+              planName = planResult[0].name;
+            }
+          }
+
+          const emailData = {
+            ...createdBooking,
+            roomTypeName,
+            planName,
+          };
+
+          // Send to Guest
+          if (createdBooking.guestEmail) {
+            await sendEmail({
+              to: createdBooking.guestEmail,
+              subject: `Booking Confirmation - ${hotelInfo.name}`,
+              text: `Thank you for your booking! Reference: #B-${createdBooking.id}. Guest Name: ${createdBooking.guestName}. Check-in: ${createdBooking.checkInDate}. Check-out: ${createdBooking.checkOutDate}.`,
+              html: getBookingConfirmationHtml(emailData, hotelInfo)
+            });
+          }
+
+          // Send to Hotel Admins (Client + Admin combination)
+          const adminUsers = await db.select().from(users).where(and(eq(users.hotelId, hotelId), eq(users.role, 'admin')));
+          const adminEmails = adminUsers.map(u => u.email).filter(Boolean) as string[];
+          for (const adminEmail of adminEmails) {
+            await sendEmail({
+              to: adminEmail,
+              subject: `New Booking Alert - Reference: #B-${createdBooking.id} - ${hotelInfo.name}`,
+              text: `A new booking has been made! Reference: #B-${createdBooking.id}. Guest Name: ${createdBooking.guestName}. Check-in: ${createdBooking.checkInDate}. Check-out: ${createdBooking.checkOutDate}.`,
+              html: getBookingConfirmationHtml(emailData, hotelInfo)
+            });
+          }
+        } catch (mailErr) {
+          console.error('Failed to dispatch public booking emails:', mailErr);
+        }
+      })();
+    }
+
     res.json(newBookings[0]);
 
   } catch (error) {

@@ -9,6 +9,13 @@ export const hotels = pgTable('hotels', {
   name: text('name').notNull(),
   address: text('address'),
   createdAt: timestamp('created_at').defaultNow(),
+  features: text('features').default('bookings,housekeeping,restaurant,expenses,agents'),
+  parentId: integer('parent_id'), // Self-reference to hotels.id for chains. Null = Independent/Primary
+  subscriptionStatus: text('subscription_status').default('trialing'), // 'trialing' | 'active' | 'expired'
+  subscriptionEndsAt: timestamp('subscription_ends_at'),
+  subscriptionDues: real('subscription_dues').default(0),
+  subscriptionPrice: real('subscription_price').default(6000.0),
+  slug: text('slug').unique(),
 });
 
 // 2. Users (Includes Admins, Staff, and Agents restricted per hotel)
@@ -157,6 +164,37 @@ export const restaurantMenu = pgTable('restaurant_menu', {
   description: text('description'),
   isAvailable: boolean('is_available').default(true).notNull(),
 });
+
+// 14. Password Resets
+export const passwordResets = pgTable('password_resets', {
+  id: serial('id').primaryKey(),
+  email: text('email').notNull(),
+  token: text('token').notNull().unique(),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// 15. Onboarding OTPs for email validation
+export const onboardingOtps = pgTable('onboarding_otps', {
+  id: serial('id').primaryKey(),
+  email: text('email').notNull(),
+  otp: text('otp').notNull(),
+  payload: text('payload').notNull(), // JSON string of registration details
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
+});
+
+// 16. Agent Room Prices for Dynamic Agent-Specific Pricing
+export const agentRoomPrices = pgTable('agent_room_prices', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  agentId: integer('agent_id').references(() => users.id).notNull(),
+  roomTypeId: integer('room_type_id').references(() => roomTypes.id).notNull(),
+  price: real('price').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+
 
 
 

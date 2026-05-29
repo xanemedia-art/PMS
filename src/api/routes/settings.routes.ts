@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { db } from '../../db/index.js';
 import { users, hotels, rooms, roomTypes, plans } from '../../db/schema.js';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, or, sql } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
@@ -93,6 +93,23 @@ router.post('/team', requireRole(['admin']), async (req: AuthRequest, res) => {
     });
     
     res.status(201).json({ message: 'Team member added successfully' });
+
+    // Send welcome email to new staff member asynchronously
+    (async () => {
+      try {
+        const hotelResult = await db.select().from(hotels).where(eq(hotels.id, req.user!.hotelId)).limit(1);
+        const hotelName = hotelResult[0]?.name || 'Hotel';
+        const { getStaffWelcomeHtml, sendEmail } = await import('../utils/email.js');
+        await sendEmail({
+          to: email,
+          subject: `Welcome to ${hotelName} - Your Staff Account is Ready`,
+          text: `Hello ${name},\n\nYou have been added to the ${hotelName} team with the role of ${role}. Login at /login with your email (${email}) and the password set by your administrator.`,
+          html: getStaffWelcomeHtml(name, email, role, hotelName, password)
+        });
+      } catch (mailErr) {
+        console.error('Failed to send staff welcome email:', mailErr);
+      }
+    })();
   } catch (error) {
     if ((error as any).code === '23505') {
       return res.status(400).json({ error: 'Email already exists' });
@@ -150,17 +167,35 @@ router.delete('/plans/:id', requireRole(['admin', 'manager']), async (req: AuthR
 
 // --- MULTI-PROPERTY CRUD (Admin only) ---
 
-// Get all properties (hotels)
+// Get all properties (hotels) in the active chain
 router.get('/hotels', async (req: AuthRequest, res) => {
   try {
-    const allHotels = await db.select().from(hotels);
-    res.json(allHotels);
+    const userHotelId = req.user!.hotelId;
+    const currentHotelResult = await db.select().from(hotels).where(eq(hotels.id, userHotelId)).limit(1);
+    const currentHotel = currentHotelResult[0];
+
+    if (!currentHotel) {
+      res.json([]);
+      return;
+    }
+
+    const chainParentId = currentHotel.parentId || currentHotel.id;
+
+    // Fetch all properties in the chain
+    const chainHotels = await db.select()
+      .from(hotels)
+      .where(
+        sql`id = ${chainParentId} OR parent_id = ${chainParentId}`
+      );
+
+    res.json(chainHotels);
   } catch (error) {
+    console.error('Fetch chain hotels error:', error);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
 
-// Create new property
+// Create new property under the active chain
 router.post('/hotels', requireRole(['admin']), async (req: AuthRequest, res) => {
   try {
     const { name, address } = req.body;
@@ -169,9 +204,25 @@ router.post('/hotels', requireRole(['admin']), async (req: AuthRequest, res) => 
       return;
     }
 
+    const userHotelId = req.user!.hotelId;
+    const currentHotelResult = await db.select().from(hotels).where(eq(hotels.id, userHotelId)).limit(1);
+    const currentHotel = currentHotelResult[0];
+
+    if (!currentHotel) {
+      res.status(400).json({ error: 'Current hotel context not found' });
+      return;
+    }
+
+    const chainParentId = currentHotel.parentId || currentHotel.id;
+
+    // Sub-properties automatically receive a 14-day trial
     const newHotel = await db.insert(hotels).values({
       name,
-      address: address || null
+      address: address || null,
+      parentId: chainParentId,
+      subscriptionStatus: 'trialing',
+      subscriptionEndsAt: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
+      subscriptionDues: 0
     }).returning();
 
     res.status(201).json(newHotel[0]);

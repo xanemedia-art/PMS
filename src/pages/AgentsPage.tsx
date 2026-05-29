@@ -13,7 +13,7 @@ interface Agent {
   name: string;
   email: string;
   bookingsCount: number;
-  totalCommission: number;
+  totalRevenue: number;
 }
 
 export default function AgentsPage() {
@@ -21,6 +21,60 @@ export default function AgentsPage() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
+
+  // Pricing configuration states
+  const [pricingAgent, setPricingAgent] = useState<Agent | null>(null);
+  const [pricingSheet, setPricingSheet] = useState<any[]>([]);
+  const [loadingPricing, setLoadingPricing] = useState(false);
+  const [savingPricing, setSavingPricing] = useState(false);
+
+  const handleOpenPricing = async (agent: Agent) => {
+    setPricingAgent(agent);
+    setLoadingPricing(true);
+    try {
+      const res = await fetch(`/api/agents/${agent.id}/pricing`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch pricing');
+      const data = await res.json();
+      setPricingSheet(data);
+    } catch (err: any) {
+      alert(err.message);
+      setPricingAgent(null);
+    } finally {
+      setLoadingPricing(false);
+    }
+  };
+
+  const handleSavePricing = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pricingAgent) return;
+    setSavingPricing(true);
+    
+    // Construct payload: { pricing: { [roomTypeId]: price } }
+    const pricingPayload: Record<number, number | null> = {};
+    pricingSheet.forEach(row => {
+      pricingPayload[row.roomTypeId] = row.customPrice !== null && row.customPrice !== '' ? parseFloat(row.customPrice) : null;
+    });
+
+    try {
+      const res = await fetch(`/api/agents/${pricingAgent.id}/pricing`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ pricing: pricingPayload })
+      });
+      if (!res.ok) throw new Error('Failed to save pricing overrides');
+      alert('Pricing overrides saved successfully!');
+      setPricingAgent(null);
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setSavingPricing(false);
+    }
+  };
 
   // Optimized fetching with React Query
   const { data: agents = [], isLoading } = useQuery<Agent[]>({
@@ -160,7 +214,7 @@ export default function AgentsPage() {
                   <TableHead>Agent Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Total Bookings</TableHead>
-                  <TableHead>Commission Earned</TableHead>
+                  <TableHead>Revenue Generated</TableHead>
                   {user?.role === 'admin' && (
                     <TableHead className="text-right">Actions</TableHead>
                   )}
@@ -186,10 +240,18 @@ export default function AgentsPage() {
                       <TableCell className="text-slate-500">{agent.email}</TableCell>
                       <TableCell>{agent.bookingsCount}</TableCell>
                       <TableCell>
-                        ₹{(agent.totalCommission || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        ₹{(agent.totalRevenue || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </TableCell>
                       {user?.role === 'admin' && (
-                        <TableCell className="text-right">
+                        <TableCell className="text-right space-x-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-slate-700 border-slate-200 hover:bg-slate-50"
+                            onClick={() => handleOpenPricing(agent)}
+                          >
+                            Configure Pricing
+                          </Button>
                           <Button
                             variant="outline"
                             size="sm"
@@ -208,6 +270,75 @@ export default function AgentsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Configure Agent Pricing Dialog */}
+      <Dialog open={!!pricingAgent} onOpenChange={(o) => { if (!o) setPricingAgent(null); }}>
+        <DialogContent className="sm:max-w-[500px] border-none shadow-2xl">
+          <form onSubmit={handleSavePricing}>
+            <DialogHeader className="bg-slate-900 text-white px-6 py-4 rounded-t-lg -mx-6 -mt-6">
+              <DialogTitle className="text-lg font-bold">Configure Custom Pricing: {pricingAgent?.name}</DialogTitle>
+              <DialogDescription className="text-slate-400 text-xs">
+                Set agent-specific overrides for room categories. Empty fields default to hotel pricing.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="py-6 space-y-4 max-h-[50vh] overflow-y-auto">
+              {loadingPricing ? (
+                <p className="text-center text-slate-500 py-4 animate-pulse">Loading room categories...</p>
+              ) : pricingSheet.length === 0 ? (
+                <p className="text-center text-slate-500 py-4">No room categories found.</p>
+              ) : (
+                <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                  <Table className="w-full">
+                    <TableHeader className="bg-slate-50">
+                      <TableRow>
+                        <TableHead className="text-xs uppercase font-bold text-slate-400">Category</TableHead>
+                        <TableHead className="w-24 text-right text-xs uppercase font-bold text-slate-400">Default</TableHead>
+                        <TableHead className="w-32 text-right text-xs uppercase font-bold text-slate-400">Agent Rate (₹)</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pricingSheet.map((row, i) => (
+                        <TableRow key={row.roomTypeId}>
+                          <TableCell className="font-semibold text-slate-800 text-xs">{row.name}</TableCell>
+                          <TableCell className="text-right text-slate-500 text-xs">₹{row.defaultPrice}</TableCell>
+                          <TableCell className="text-right">
+                            <Input
+                              type="number"
+                              min="0"
+                              placeholder="Default"
+                              value={row.customPrice !== null && row.customPrice !== undefined ? row.customPrice : ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const updatedSheet = [...pricingSheet];
+                                updatedSheet[i] = {
+                                  ...updatedSheet[i],
+                                  customPrice: val !== '' ? parseFloat(val) : null
+                                };
+                                setPricingSheet(updatedSheet);
+                              }}
+                              className="text-right h-8 text-xs bg-slate-50 border-slate-200 focus-visible:ring-blue-500"
+                            />
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter className="-mx-6 -mb-6 bg-slate-50 px-6 py-4 rounded-b-lg border-t border-slate-100 flex gap-2">
+              <Button type="button" variant="ghost" onClick={() => setPricingAgent(null)} disabled={savingPricing} className="text-slate-500">
+                Cancel
+              </Button>
+              <Button type="submit" disabled={loadingPricing || savingPricing} className="bg-blue-600 hover:bg-blue-700 text-white font-bold">
+                {savingPricing ? 'Saving...' : 'Save Price Overrides'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

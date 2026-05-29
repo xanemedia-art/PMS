@@ -8,6 +8,9 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from './context/AuthContext';
 import AppLayout from './components/layout/AppLayout';
 import LoginPage from './pages/auth/LoginPage';
+import ForgotPasswordPage from './pages/auth/ForgotPasswordPage';
+import ResetPasswordPage from './pages/auth/ResetPasswordPage';
+import SignupPage from './pages/auth/SignupPage';
 import DashboardPage from './pages/DashboardPage';
 import BookingsPage from './pages/BookingsPage';
 import RoomsPage from './pages/RoomsPage';
@@ -32,6 +35,7 @@ import GuestPortalPage from './pages/GuestPortalPage';
 import GuestRequestsPage from './pages/GuestRequestsPage';
 import RestaurantPage from './pages/RestaurantPage';
 import PresentationPage from './pages/PresentationPage';
+import SuperAdminPage from './pages/SuperAdminPage';
 
 function MainRoutes() {
   const { user, isAuthenticated } = useAuth();
@@ -40,10 +44,18 @@ function MainRoutes() {
     <Routes>
       <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
       <Route path="/book/:hotelId" element={<BookingEnginePage />} />
+      <Route path="/h/:slug/book" element={<BookingEnginePage />} />
       <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+      <Route path="/h/:slug/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
+      <Route path="/signup" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <SignupPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
       <Route path="/guest/login" element={<GuestLoginPage />} />
       <Route path="/guest" element={<GuestPortalPage />} />
+      <Route path="/h/:slug/guest/login" element={<GuestLoginPage />} />
+      <Route path="/h/:slug/guest" element={<GuestPortalPage />} />
       <Route path="/pitch" element={<PresentationPage />} />
+      <Route path="/super-admin" element={<SuperAdminPage />} />
       
       <Route element={<ProtectedRoute><AppLayout /></ProtectedRoute>}>
         <Route path="/dashboard" element={user?.role === 'agent' ? <Navigate to="/agent" replace /> : <DashboardPage />} />

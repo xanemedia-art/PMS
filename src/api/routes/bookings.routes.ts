@@ -1,8 +1,9 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { bookings, rooms, housekeepingTasks, users, plans, invoices, restaurantOrders, guestChats } from '../../db/schema.js';
+import { bookings, rooms, housekeepingTasks, users, plans, invoices, restaurantOrders, guestChats, hotels, roomTypes, agentRoomPrices } from '../../db/schema.js';
 import { eq, and, gte, lte, lt, gt, ne } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
+import { sendEmail, getBookingConfirmationHtml, getCheckInConfirmationHtml, getCheckOutConfirmationHtml, getBookingCancellationHtml, getBookingStatusConfirmedHtml, getAdminBookingAlertHtml } from '../utils/email.js';
 
 const router = express.Router();
 
@@ -199,6 +200,79 @@ router.post('/', async (req: AuthRequest, res) => {
 
     const newBookings = await db.insert(bookings).values(valuesToInsert).returning();
 
+    // Send email notifications asynchronously
+    if (newBookings.length > 0) {
+      const createdBooking = newBookings[0];
+      
+      // Run as IIFE to not block API response
+      (async () => {
+        try {
+          const hotelResult = await db.select().from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+          const hotelInfo = hotelResult[0] || { name: process.env.HOTEL_NAME || 'Hotel', address: process.env.HOTEL_ADDRESS || '' };
+          
+          let roomTypeName = 'Selected Room';
+          if (createdBooking.roomTypeId) {
+            const rtResult = await db.select().from(roomTypes).where(eq(roomTypes.id, createdBooking.roomTypeId)).limit(1);
+            if (rtResult.length > 0) {
+              roomTypeName = rtResult[0].name;
+            }
+          }
+
+          let planName = 'Standard Plan';
+          if (createdBooking.planId) {
+            const planResult = await db.select().from(plans).where(eq(plans.id, createdBooking.planId)).limit(1);
+            if (planResult.length > 0) {
+              planName = planResult[0].name;
+            }
+          }
+
+          const emailData = {
+            ...createdBooking,
+            roomTypeName,
+            planName,
+          };
+
+          // Send based on exact combination matrix
+          const adminUsers = await db.select().from(users).where(and(eq(users.hotelId, hotelId), eq(users.role, 'admin')));
+          const adminEmails = adminUsers.map(u => u.email).filter(Boolean) as string[];
+          const creatorResult = bookedById ? await db.select().from(users).where(eq(users.id, bookedById)).limit(1) : [];
+          const creator = creatorResult[0];
+
+          if (creator && creator.role === 'agent') {
+            // Agent -> Agent + Admin
+            if (creator.email) {
+              await sendEmail({
+                to: creator.email,
+                subject: `Booking Confirmed (Created by You) - Reference: #B-${createdBooking.id} - ${hotelInfo.name}`,
+                text: `You have successfully created a booking! Reference: #B-${createdBooking.id}. Guest Name: ${createdBooking.guestName}. Check-in: ${createdBooking.checkInDate}. Check-out: ${createdBooking.checkOutDate}.`,
+                html: getBookingConfirmationHtml(emailData, hotelInfo)
+              });
+            }
+            for (const adminEmail of adminEmails) {
+              await sendEmail({
+                to: adminEmail,
+                subject: `New Agent Booking Created - Reference: #B-${createdBooking.id} - ${hotelInfo.name}`,
+                text: `A new booking has been created by agent ${creator.name}! Reference: #B-${createdBooking.id}. Guest Name: ${createdBooking.guestName}. Check-in: ${createdBooking.checkInDate}. Check-out: ${createdBooking.checkOutDate}.`,
+                html: getBookingConfirmationHtml(emailData, hotelInfo)
+              });
+            }
+          } else {
+            // Staff / Admin / Guest (if no creator) -> Guest only
+            if (createdBooking.guestEmail) {
+              await sendEmail({
+                to: createdBooking.guestEmail,
+                subject: `Booking Confirmation - ${hotelInfo.name}`,
+                text: `Thank you for your booking! Reference: #B-${createdBooking.id}. Guest Name: ${createdBooking.guestName}. Check-in: ${createdBooking.checkInDate}. Check-out: ${createdBooking.checkOutDate}.`,
+                html: getBookingConfirmationHtml(emailData, hotelInfo)
+              });
+            }
+          }
+        } catch (mailErr) {
+          console.error('Failed to dispatch bookings portal emails:', mailErr);
+        }
+      })();
+    }
+
     res.json(newBookings[0]);
   } catch (error) {
     console.error('Create booking error:', error);
@@ -242,6 +316,77 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
               notes: 'Room requires cleaning after check-out'
             });
         }
+        
+        // Calculate and create invoice dynamically
+        (async () => {
+          try {
+            const b = updated[0];
+            const nights = Math.max(1, Math.round((new Date(b.checkOutDate).getTime() - new Date(b.checkInDate).getTime()) / (1000 * 60 * 60 * 24)));
+            
+            // Determine the room type price
+            let roomPrice = 0;
+            if (b.roomTypeId) {
+              const rt = await db.select().from(roomTypes).where(eq(roomTypes.id, b.roomTypeId)).limit(1);
+              if (rt.length > 0) {
+                roomPrice = rt[0].price;
+              }
+            }
+
+            // Check if there is agent-specific pricing override
+            if (b.bookedById) {
+              const creator = await db.select().from(users).where(eq(users.id, b.bookedById)).limit(1);
+              if (creator.length > 0 && creator[0].role === 'agent' && b.roomTypeId) {
+                const agentPrice = await db.select().from(agentRoomPrices).where(and(
+                  eq(agentRoomPrices.hotelId, hotelId),
+                  eq(agentRoomPrices.agentId, b.bookedById),
+                  eq(agentRoomPrices.roomTypeId, b.roomTypeId)
+                )).limit(1);
+                if (agentPrice.length > 0) {
+                  roomPrice = agentPrice[0].price;
+                }
+              }
+            }
+
+            // Meal Plan Multiplier
+            let multiplier = 1.0;
+            if (b.planId) {
+              const p = await db.select().from(plans).where(eq(plans.id, b.planId)).limit(1);
+              if (p.length > 0) {
+                multiplier = p[0].priceMultiplier || 1.0;
+              }
+            }
+
+            const baseAmount = roomPrice * (b.roomCount || 1) * nights * multiplier;
+
+            // Extras: Delivered restaurant orders billed to room
+            const orders = await db.select().from(restaurantOrders).where(and(
+              eq(restaurantOrders.bookingId, b.id),
+              eq(restaurantOrders.status, 'delivered')
+            ));
+            const extrasAmount = orders.reduce((sum, order) => sum + (order.totalAmount || 0), 0);
+
+            // Taxes (12%)
+            const taxAmount = (baseAmount + extrasAmount) * 0.12;
+            const totalAmount = baseAmount + extrasAmount + taxAmount;
+
+            // Clean up existing invoice if any exists first (safe fallback)
+            await db.delete(invoices).where(eq(invoices.bookingId, b.id));
+            
+            await db.insert(invoices).values({
+              hotelId,
+              bookingId: b.id,
+              baseAmount,
+              extrasAmount,
+              taxAmount,
+              totalAmount,
+              status: 'paid',
+              issuedAt: new Date()
+            });
+            console.log(`Generated paid invoice for booking Ref #B-${b.id}. Base=${baseAmount}, Extras=${extrasAmount}, Tax=${taxAmount}, Total=${totalAmount}`);
+          } catch (invErr) {
+            console.error('Failed to automatically generate invoice on check-out:', invErr);
+          }
+        })();
     } else if (status === 'checked_in') {
         let assignedRoomId = updated[0].roomId;
         
@@ -287,6 +432,128 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
         const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
         await db.update(rooms).set({ status: 'occupied', guestPin: randomPin }).where(eq(rooms.id, assignedRoomId));
     }
+
+    // Re-fetch booking to get updated roomId after room assignment
+    let booking = updated[0];
+    if (status === 'checked_in') {
+      const refreshed = await db.select().from(bookings).where(eq(bookings.id, id)).limit(1);
+      if (refreshed.length > 0) booking = refreshed[0];
+    }
+
+    // Send email confirmations asynchronously
+    if (booking && booking.guestEmail) {
+      (async () => {
+        try {
+          const hotelResult = await db.select().from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+          const hotelInfo = hotelResult[0] || { name: process.env.HOTEL_NAME || 'Hotel', address: process.env.HOTEL_ADDRESS || '' };
+
+          if (status === 'confirmed') {
+            await sendEmail({
+              to: booking.guestEmail!,
+              subject: `Booking Confirmed - ${hotelInfo.name} | Ref #B-${booking.id}`,
+              text: `Hello ${booking.guestName},\n\nGreat news! Your booking reference #B-${booking.id} has been confirmed by the hotel team. Check-in: ${booking.checkInDate}. Check-out: ${booking.checkOutDate}. We look forward to welcoming you!`,
+              html: getBookingStatusConfirmedHtml(booking, hotelInfo)
+            });
+          } else if (status === 'checked_in') {
+            let pinCode = '';
+            let roomNum = 'TBD';
+            const roomResult = booking.roomId ? await db.select().from(rooms).where(eq(rooms.id, booking.roomId)).limit(1) : [];
+            if (roomResult.length > 0) {
+              roomNum = roomResult[0].number;
+              pinCode = roomResult[0].guestPin || '';
+            }
+            await sendEmail({
+              to: booking.guestEmail!,
+              subject: `Welcome to ${hotelInfo.name} - Check-In Confirmation`,
+              text: `Hello ${booking.guestName},\n\nYou have checked in. Your assigned room is ${roomNum}. Your guest portal login PIN is: ${pinCode}.\n\nEnjoy your stay!`,
+              html: getCheckInConfirmationHtml(booking, roomNum, pinCode, hotelInfo)
+            });
+          } else if (status === 'checked_out') {
+            const adminUsers = await db.select().from(users).where(and(eq(users.hotelId, hotelId), eq(users.role, 'admin')));
+            const adminEmails = adminUsers.map(u => u.email).filter(Boolean) as string[];
+            const creatorResult = booking.bookedById ? await db.select().from(users).where(eq(users.id, booking.bookedById)).limit(1) : [];
+            const creator = creatorResult[0];
+
+            if (creator && creator.role === 'agent') {
+              // Agent -> Agent + Admin
+              if (creator.email) {
+                await sendEmail({
+                  to: creator.email,
+                  subject: `Guest Checked Out (Booking Created by You) - Ref #B-${booking.id} - ${hotelInfo.name}`,
+                  text: `Hello ${creator.name},\n\nThe guest ${booking.guestName} for booking reference #B-${booking.id} has checked out.`,
+                  html: getCheckOutConfirmationHtml(booking, hotelInfo)
+                });
+              }
+              for (const adminEmail of adminEmails) {
+                await sendEmail({
+                  to: adminEmail,
+                  subject: `[Alert] Guest Checked Out - ${booking.guestName} | ${hotelInfo.name}`,
+                  text: `${booking.guestName} has checked out. Booking Reference: #B-${booking.id}.`,
+                  html: getCheckOutConfirmationHtml(booking, hotelInfo)
+                });
+              }
+            } else if (!booking.bookedById) {
+              // Guest (Public Booking) -> Client + Admin
+              if (booking.guestEmail) {
+                await sendEmail({
+                  to: booking.guestEmail,
+                  subject: `Thank you for staying with us - ${hotelInfo.name}`,
+                  text: `Hello ${booking.guestName},\n\nYour check-out has been processed. Thank you for staying at ${hotelInfo.name}. We hope to see you again!`,
+                  html: getCheckOutConfirmationHtml(booking, hotelInfo)
+                });
+              }
+              for (const adminEmail of adminEmails) {
+                await sendEmail({
+                  to: adminEmail,
+                  subject: `[Alert] Guest Checked Out - ${booking.guestName} | ${hotelInfo.name}`,
+                  text: `${booking.guestName} has checked out. Booking Reference: #B-${booking.id}.`,
+                  html: getCheckOutConfirmationHtml(booking, hotelInfo)
+                });
+              }
+            } else {
+              // Staff / Admin -> Guest only
+              if (booking.guestEmail) {
+                await sendEmail({
+                  to: booking.guestEmail,
+                  subject: `Thank you for staying with us - ${hotelInfo.name}`,
+                  text: `Hello ${booking.guestName},\n\nYour check-out has been processed. Thank you for staying at ${hotelInfo.name}. We hope to see you again!`,
+                  html: getCheckOutConfirmationHtml(booking, hotelInfo)
+                });
+              }
+            }
+          } else if (status === 'cancelled') {
+            await sendEmail({
+              to: booking.guestEmail!,
+              subject: `Reservation Cancelled - ${hotelInfo.name}`,
+              text: `Hello ${booking.guestName},\n\nThis is to confirm your booking reference #B-${booking.id} has been cancelled.`,
+              html: getBookingCancellationHtml(booking, hotelInfo)
+            });
+          }
+
+          // Admin notification on check-in only (checkout handled by combinations above)
+          if (status === 'checked_in') {
+            const adminUsers = await db.select().from(users).where(and(eq(users.hotelId, hotelId), eq(users.role, 'admin'))).limit(1);
+            if (adminUsers.length > 0 && adminUsers[0].email) {
+              let roomNumForAdmin = 'N/A';
+              if (booking.roomId) {
+                const roomRes = await db.select().from(rooms).where(eq(rooms.id, booking.roomId)).limit(1);
+                if (roomRes.length > 0) roomNumForAdmin = roomRes[0].number;
+              }
+              const bookingForEmail = { ...booking, roomNumber: roomNumForAdmin };
+              await sendEmail({
+                to: adminUsers[0].email,
+                subject: `[Alert] Guest Checked In - ${booking.guestName} | ${hotelInfo.name}`,
+                text: `${booking.guestName} has checked in. Booking Reference: #B-${booking.id}. Room: ${roomNumForAdmin}.`,
+                html: getAdminBookingAlertHtml(bookingForEmail, 'checkin', hotelInfo)
+              });
+            }
+          }
+        } catch (mailErr) {
+          console.error('Failed to send status update emails:', mailErr);
+        }
+      })();
+    }
+
     res.json(updated[0]);
   } catch (error) {
     res.status(500).json({ error: 'Failed to update booking status' });
