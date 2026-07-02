@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X, Coffee, MessageSquare, Lock } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X, Coffee, MessageSquare, Lock, CreditCard } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 export default function AppLayout() {
@@ -199,6 +199,7 @@ export default function AppLayout() {
     { name: 'Housekeeping', path: '/housekeeping', icon: UserRoundCog, roles: ['admin', 'manager', 'staff'], feature: 'housekeeping' },
     { name: 'Agents', path: '/agents', icon: Users, roles: ['admin', 'manager'], feature: 'agents' },
     { name: 'Expenses', path: '/expenses', icon: Wallet, roles: ['admin', 'manager', 'staff'], feature: 'expenses' },
+    { name: 'Billing', path: '/billing', icon: CreditCard, roles: ['admin', 'manager', 'staff'], feature: 'bookings' },
     { name: 'Reports', path: '/reports', icon: BarChart3, roles: ['admin', 'manager'], feature: 'bookings' },
     { name: 'Settings', path: '/settings', icon: Settings, roles: ['admin', 'manager'], feature: 'bookings' },
   ];

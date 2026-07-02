@@ -57,8 +57,18 @@ router.get('/hotel', async (req: AuthRequest, res) => {
 // Update hotel details (Admin/Manager only)
 router.patch('/hotel', requireRole(['admin', 'manager']), async (req: AuthRequest, res) => {
   try {
-    const { name, address } = req.body;
-    await db.update(hotels).set({ name, address }).where(eq(hotels.id, req.user!.hotelId));
+    const { name, address, gstin, billingStateName, billingStateCode, roomGstRate, foodGstRate, roomSacCode, foodSacCode } = req.body;
+    await db.update(hotels).set({ 
+      name, 
+      address,
+      gstin: gstin !== undefined ? gstin : undefined,
+      billingStateName: billingStateName !== undefined ? billingStateName : undefined,
+      billingStateCode: billingStateCode !== undefined ? billingStateCode : undefined,
+      roomGstRate: roomGstRate !== undefined ? parseFloat(roomGstRate) : undefined,
+      foodGstRate: foodGstRate !== undefined ? parseFloat(foodGstRate) : undefined,
+      roomSacCode: roomSacCode !== undefined ? roomSacCode : undefined,
+      foodSacCode: foodSacCode !== undefined ? foodSacCode : undefined
+    }).where(eq(hotels.id, req.user!.hotelId));
     res.json({ message: 'Hotel updated successfully' });
   } catch (error) {
     res.status(500).json({ error: 'Internal server error' });
@@ -235,7 +245,7 @@ router.post('/hotels', requireRole(['admin']), async (req: AuthRequest, res) => 
 router.patch('/hotels/:id', requireRole(['admin']), async (req: AuthRequest, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { name, address } = req.body;
+    const { name, address, gstin, billingStateName, billingStateCode, roomGstRate, foodGstRate, roomSacCode, foodSacCode } = req.body;
 
     if (isNaN(id)) {
       res.status(400).json({ error: 'Invalid hotel ID' });
@@ -243,7 +253,17 @@ router.patch('/hotels/:id', requireRole(['admin']), async (req: AuthRequest, res
     }
 
     const updated = await db.update(hotels)
-      .set({ name, address })
+      .set({ 
+        name, 
+        address,
+        gstin: gstin !== undefined ? gstin : undefined,
+        billingStateName: billingStateName !== undefined ? billingStateName : undefined,
+        billingStateCode: billingStateCode !== undefined ? billingStateCode : undefined,
+        roomGstRate: roomGstRate !== undefined ? parseFloat(roomGstRate) : undefined,
+        foodGstRate: foodGstRate !== undefined ? parseFloat(foodGstRate) : undefined,
+        roomSacCode: roomSacCode !== undefined ? roomSacCode : undefined,
+        foodSacCode: foodSacCode !== undefined ? foodSacCode : undefined
+      })
       .where(eq(hotels.id, id))
       .returning();
 

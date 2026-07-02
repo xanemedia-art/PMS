@@ -1,7 +1,7 @@
 import express, { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
 import { db } from '../../db/index.js';
-import { rooms, bookings, housekeepingTasks, restaurantOrders, guestChats, hotels } from '../../db/schema.js';
+import { rooms, bookings, housekeepingTasks, restaurantOrders, guestChats, hotels, restaurantMenu, bookingExpenses, plans, roomTypes, users, agentRoomPrices } from '../../db/schema.js';
 import { eq, and, desc } from 'drizzle-orm';
 import { authenticateToken, AuthRequest } from '../middleware/auth.middleware.js';
 
@@ -186,6 +186,300 @@ router.post('/order', authenticateGuestToken, async (req: GuestRequest, res: Res
   } catch (error) {
     console.error('Room service order error:', error);
     res.status(500).json({ error: 'Failed to place room service order' });
+  }
+});
+
+// Fetch available menu items scoped to the guest's hotel property
+router.get('/menu', authenticateGuestToken, async (req: GuestRequest, res: Response) => {
+  try {
+    const { hotelId } = req.guest!;
+    const menu = await db.select()
+      .from(restaurantMenu)
+      .where(
+        and(
+          eq(restaurantMenu.hotelId, hotelId),
+          eq(restaurantMenu.isAvailable, true)
+        )
+      )
+      .orderBy(restaurantMenu.category, restaurantMenu.name);
+    res.json(menu);
+  } catch (error) {
+    console.error('Fetch menu error:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant menu' });
+  }
+});
+
+// Fetch active and past restaurantOrders placed by the guest
+router.get('/orders', authenticateGuestToken, async (req: GuestRequest, res: Response) => {
+  try {
+    const { bookingId } = req.guest!;
+    const orders = await db.select()
+      .from(restaurantOrders)
+      .where(eq(restaurantOrders.bookingId, bookingId))
+      .orderBy(desc(restaurantOrders.createdAt));
+    res.json(orders);
+  } catch (error) {
+    console.error('Fetch orders error:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant orders' });
+  }
+});
+
+// Edit items and totalAmount of the guest's own order only if status is pending
+router.patch('/orders/:orderId', authenticateGuestToken, async (req: GuestRequest, res: Response) => {
+  try {
+    const { bookingId } = req.guest!;
+    const orderId = parseInt(req.params.orderId);
+    const { items, totalAmount } = req.body;
+
+    if (!items || totalAmount === undefined) {
+      res.status(400).json({ error: 'Items and totalAmount are required' });
+      return;
+    }
+
+    // Check ownership and pending status
+    const orderResult = await db.select()
+      .from(restaurantOrders)
+      .where(and(eq(restaurantOrders.id, orderId), eq(restaurantOrders.bookingId, bookingId)))
+      .limit(1);
+
+    if (orderResult.length === 0) {
+      res.status(404).json({ error: 'Order not found or access denied' });
+      return;
+    }
+
+    const order = orderResult[0];
+    if (order.status !== 'pending') {
+      res.status(400).json({ error: 'Order can only be modified while pending' });
+      return;
+    }
+
+    const updated = await db.update(restaurantOrders)
+      .set({
+        items: typeof items === 'string' ? items : JSON.stringify(items),
+        totalAmount: parseFloat(totalAmount)
+      })
+      .where(eq(restaurantOrders.id, orderId))
+      .returning();
+
+    res.json(updated[0]);
+  } catch (error) {
+    console.error('Update guest order error:', error);
+    res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
+// Cancel order only if status is pending
+router.patch('/orders/:orderId/cancel', authenticateGuestToken, async (req: GuestRequest, res: Response) => {
+  try {
+    const { bookingId } = req.guest!;
+    const orderId = parseInt(req.params.orderId);
+
+    // Check ownership and pending status
+    const orderResult = await db.select()
+      .from(restaurantOrders)
+      .where(and(eq(restaurantOrders.id, orderId), eq(restaurantOrders.bookingId, bookingId)))
+      .limit(1);
+
+    if (orderResult.length === 0) {
+      res.status(404).json({ error: 'Order not found or access denied' });
+      return;
+    }
+
+    const order = orderResult[0];
+    if (order.status !== 'pending') {
+      res.status(400).json({ error: 'Order can only be cancelled while pending' });
+      return;
+    }
+
+    const updated = await db.update(restaurantOrders)
+      .set({ status: 'cancelled' })
+      .where(eq(restaurantOrders.id, orderId))
+      .returning();
+
+    res.json(updated[0]);
+  } catch (error) {
+    console.error('Cancel guest order error:', error);
+    res.status(500).json({ error: 'Failed to cancel order' });
+  }
+});
+
+// Fetch running bill breakdown for the checked-in guest
+router.get('/bill', authenticateGuestToken, async (req: GuestRequest, res: Response) => {
+  try {
+    const { bookingId, hotelId } = req.guest!;
+
+    const bookingResult = await db.select({
+      booking: bookings,
+      roomNumber: rooms.number,
+      roomTypeName: roomTypes.name,
+      roomBasePrice: roomTypes.price,
+    })
+    .from(bookings)
+    .leftJoin(rooms, eq(bookings.roomId, rooms.id))
+    .leftJoin(roomTypes, eq(bookings.roomTypeId, roomTypes.id))
+    .where(
+      and(
+        eq(bookings.id, bookingId),
+        eq(bookings.hotelId, hotelId)
+      )
+    ).limit(1);
+
+    if (bookingResult.length === 0) {
+      res.status(404).json({ error: 'Booking not found' });
+      return;
+    }
+
+    const { booking: b, roomNumber, roomTypeName, roomBasePrice } = bookingResult[0];
+    
+    // Calculate lodging nights
+    let nights = 1;
+    try {
+      const checkIn = new Date(b.checkInDate);
+      const checkOut = new Date(b.checkOutDate);
+      const diffTime = checkOut.getTime() - checkIn.getTime();
+      nights = Math.max(1, Math.round(diffTime / (1000 * 60 * 60 * 24)));
+    } catch (err) {
+      nights = 1;
+    }
+
+    // Get hotel GST configurations
+    const hotelResult = await db.select().from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+    const hotelConf = hotelResult[0];
+    const roomGstRate = hotelConf?.roomGstRate ?? 12.0;
+    const foodGstRate = hotelConf?.foodGstRate ?? 5.0;
+    const roomSacCode = hotelConf?.roomSacCode ?? '996311';
+    const foodSacCode = hotelConf?.foodSacCode ?? '99633';
+
+    // 1. Room Charges details
+    let roomPrice = roomBasePrice || 0;
+    if (b.bookedById) {
+      const creator = await db.select().from(users).where(eq(users.id, b.bookedById)).limit(1);
+      if (creator.length > 0 && creator[0].role === 'agent' && b.roomTypeId) {
+        const agentPrice = await db.select().from(agentRoomPrices).where(and(
+          eq(agentRoomPrices.hotelId, hotelId),
+          eq(agentRoomPrices.agentId, b.bookedById),
+          eq(agentRoomPrices.roomTypeId, b.roomTypeId)
+        )).limit(1);
+        if (agentPrice.length > 0) {
+          roomPrice = agentPrice[0].price;
+        }
+      }
+    }
+
+    let multiplier = 1.0;
+    let planName = 'EP (Room Only)';
+    if (b.planId) {
+      const p = await db.select().from(plans).where(eq(plans.id, b.planId)).limit(1);
+      if (p.length > 0) {
+        multiplier = p[0].priceMultiplier ?? 1.0;
+        planName = p[0].name;
+      }
+    }
+
+    const roomRatePerNight = roomPrice * multiplier;
+    const roomTotalBase = roomRatePerNight * (b.roomCount || 1) * nights;
+
+    const roomItem = {
+      type: 'room',
+      description: `Room Rent (${roomTypeName || 'N/A'} - Room ${roomNumber || 'N/A'}) - ${nights} Night(s), ${b.roomCount || 1} Room(s) - Plan: ${planName}`,
+      sacCode: roomSacCode,
+      rate: roomRatePerNight,
+      quantity: (b.roomCount || 1) * nights,
+      taxableValue: roomTotalBase,
+      gstRate: roomGstRate,
+      cgstRate: roomGstRate / 2,
+      sgstRate: roomGstRate / 2,
+      taxAmount: roomTotalBase * (roomGstRate / 100),
+    };
+
+    // 2. Restaurant Orders (delivered)
+    const orders = await db.select().from(restaurantOrders).where(
+      and(
+        eq(restaurantOrders.bookingId, bookingId),
+        eq(restaurantOrders.status, 'delivered')
+      )
+    );
+
+    const orderItems = orders.map((order) => {
+      const total = order.totalAmount || 0;
+      const taxable = total / (1 + (foodGstRate / 100));
+      const tax = total - taxable;
+
+      return {
+        id: order.id,
+        type: 'restaurant',
+        description: `Restaurant Order #${order.id} (${order.type === 'room_service' ? 'Room Service' : 'Dine In'}) - ${new Date(order.createdAt).toLocaleDateString('en-IN')}`,
+        sacCode: foodSacCode,
+        rate: taxable,
+        quantity: 1,
+        taxableValue: taxable,
+        gstRate: foodGstRate,
+        cgstRate: foodGstRate / 2,
+        sgstRate: foodGstRate / 2,
+        taxAmount: tax,
+      };
+    });
+
+    // 3. Custom added expenses
+    const expenses = await db.select().from(bookingExpenses).where(
+      eq(bookingExpenses.bookingId, bookingId)
+    );
+
+    const expenseItems = expenses.map((exp) => {
+      const taxable = exp.amount * (exp.quantity || 1);
+      const gst = exp.gstRate ?? 18.0;
+      const tax = taxable * (gst / 100);
+
+      return {
+        id: exp.id,
+        type: 'expense',
+        description: exp.name,
+        sacCode: exp.sacCode || '999799',
+        rate: exp.amount,
+        quantity: exp.quantity || 1,
+        taxableValue: taxable,
+        gstRate: gst,
+        cgstRate: gst / 2,
+        sgstRate: gst / 2,
+        taxAmount: tax,
+      };
+    });
+
+    // Combine all billing items
+    const allItems = [roomItem, ...orderItems, ...expenseItems];
+    
+    // Totals
+    const totalTaxable = allItems.reduce((sum, item) => sum + item.taxableValue, 0);
+    const totalTax = allItems.reduce((sum, item) => sum + item.taxAmount, 0);
+    const totalAmount = totalTaxable + totalTax;
+
+    res.json({
+      booking: {
+        id: b.id,
+        guestName: b.guestName,
+        guestEmail: b.guestEmail,
+        guestPhone: b.guestPhone,
+        checkInDate: b.checkInDate,
+        checkOutDate: b.checkOutDate,
+        status: b.status,
+      },
+      hotel: {
+        name: hotelConf?.name,
+        address: hotelConf?.address,
+        gstin: hotelConf?.gstin,
+        stateName: hotelConf?.billingStateName,
+        stateCode: hotelConf?.billingStateCode,
+      },
+      items: allItems,
+      totals: {
+        taxable: totalTaxable,
+        tax: totalTax,
+        amount: totalAmount,
+      }
+    });
+  } catch (error) {
+    console.error('Fetch guest bill breakdown error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

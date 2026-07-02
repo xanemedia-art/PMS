@@ -18,6 +18,7 @@ import guestRoutes from './src/api/routes/guest.routes.js';
 import restaurantRoutes from './src/api/routes/restaurant.routes.js';
 import superAdminRoutes from './src/api/routes/super-admin.routes.js';
 import subscriptionRoutes from './src/api/routes/subscription.routes.js';
+import billingRoutes from './src/api/routes/billing.routes.js';
 import { checkSubscription } from './src/api/middleware/subscription.middleware.js';
 
 
@@ -94,6 +95,7 @@ export async function createApp() {
   app.use('/api/guest', guestRoutes);
   app.use('/api/restaurant', restaurantRoutes);
   app.use('/api/super-admin', superAdminRoutes);
+  app.use('/api/billing', billingRoutes);
 
 
   // Vite middleware for development

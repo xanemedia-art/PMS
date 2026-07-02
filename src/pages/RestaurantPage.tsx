@@ -6,7 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Coffee, Plus, AlertTriangle, ChefHat, CheckCircle2, ClipboardList, Edit, Trash2, Layers, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Coffee, Plus, Minus, AlertTriangle, ChefHat, CheckCircle2, ClipboardList, Edit, Trash2, Layers, ToggleLeft, ToggleRight } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
@@ -38,6 +38,10 @@ export default function RestaurantPage() {
     description: '',
     isAvailable: true
   });
+
+  // KOT Edit states
+  const [editingOrder, setEditingOrder] = useState<any>(null);
+  const [editingItems, setEditingItems] = useState<any[]>([]);
 
   // Queries
   // 1. Fetch Orders / KOTs
@@ -101,6 +105,28 @@ export default function RestaurantPage() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['restaurantOrders'] });
     }
+  });
+
+  // Update restaurant order items & total
+  const updateOrderMutation = useMutation({
+    mutationFn: async ({ id, items, totalAmount }: { id: number; items: any[]; totalAmount: number }) => {
+      const res = await fetch(`/api/restaurant/orders/${id}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ items, totalAmount })
+      });
+      if (!res.ok) throw new Error('Failed to update order');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantOrders'] });
+      setEditingOrder(null);
+      setEditingItems([]);
+    },
+    onError: (err: any) => alert(err.message)
   });
 
   // Add Inventory item
@@ -396,6 +422,19 @@ export default function RestaurantPage() {
                     </CardContent>
 
                     <div className="p-4 border-t bg-slate-50 flex items-center justify-end gap-2">
+                      {(order.status === 'pending' || order.status === 'preparing') && (
+                        <Button 
+                          size="sm"
+                          variant="outline"
+                          className="font-bold border-slate-300 hover:bg-slate-100"
+                          onClick={() => {
+                            setEditingOrder(order);
+                            setEditingItems(parsedItems);
+                          }}
+                        >
+                          <Edit className="w-3.5 h-3.5 mr-1" /> Edit Ticket
+                        </Button>
+                      )}
                       {order.status === 'pending' && (
                         <Button 
                           size="sm"
@@ -454,6 +493,105 @@ export default function RestaurantPage() {
               })}
             </div>
           )}
+
+          {/* Edit Order Dialog */}
+          <Dialog open={!!editingOrder} onOpenChange={(open) => !open && setEditingOrder(null)}>
+            <DialogContent className="sm:max-w-[450px]">
+              <DialogHeader>
+                <DialogTitle>Edit KOT Ticket #{editingOrder?.id}</DialogTitle>
+                <DialogDescription>
+                  Adjust quantities or remove items from this order.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="py-4 space-y-4 max-h-[300px] overflow-y-auto pr-1">
+                {editingItems.map((item, index) => (
+                  <div key={index} className="flex items-center justify-between gap-4 py-2 border-b last:border-0 border-slate-100">
+                    <div className="flex-1">
+                      <p className="font-semibold text-sm text-slate-800">{item.name}</p>
+                      <p className="text-xs text-slate-500">₹{Number(item.price).toFixed(2)} each</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 w-8 p-0"
+                        onClick={() => {
+                          setEditingItems(prev => {
+                            const updated = [...prev];
+                            if (updated[index].quantity > 1) {
+                              updated[index] = { ...updated[index], quantity: updated[index].quantity - 1 };
+                            }
+                            return updated;
+                          });
+                        }}
+                      >
+                        <Minus className="w-3.5 h-3.5" />
+                      </Button>
+                      <span className="text-sm font-bold w-6 text-center">{item.quantity}</span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-8 w-8 p-0"
+                        onClick={() => {
+                          setEditingItems(prev => {
+                            const updated = [...prev];
+                            updated[index] = { ...updated[index], quantity: updated[index].quantity + 1 };
+                            return updated;
+                          });
+                        }}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-red-500 hover:text-red-650 hover:bg-red-50"
+                        onClick={() => {
+                          setEditingItems(prev => prev.filter((_, idx) => idx !== index));
+                        }}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {editingItems.length === 0 && (
+                  <p className="text-sm text-slate-400 italic text-center py-4">No items left in the ticket. Save will update total amount to ₹0.</p>
+                )}
+              </div>
+
+              <div className="border-t pt-3 flex justify-between items-center font-bold">
+                <span className="text-sm text-slate-500 uppercase">Updated Total</span>
+                <span className="text-base text-slate-900 font-mono">
+                  ₹{editingItems.reduce((sum, item) => sum + item.price * item.quantity, 0).toFixed(2)}
+                </span>
+              </div>
+
+              <DialogFooter className="pt-4 flex gap-2">
+                <Button type="button" variant="outline" onClick={() => setEditingOrder(null)}>Cancel</Button>
+                <Button
+                  type="button"
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                  disabled={updateOrderMutation.isPending}
+                  onClick={() => {
+                    if (!editingOrder) return;
+                    const total = editingItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+                    updateOrderMutation.mutate({
+                      id: editingOrder.id,
+                      items: editingItems,
+                      totalAmount: total
+                    });
+                  }}
+                >
+                  {updateOrderMutation.isPending ? 'Saving...' : 'Save Changes'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         {/* ── STORAGE & INVENTORY TAB ── */}

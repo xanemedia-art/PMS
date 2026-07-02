@@ -85,6 +85,53 @@ router.post('/orders', async (req: AuthRequest, res) => {
   }
 });
 
+// Update restaurant order items, quantities, table number, totalAmount, or status
+router.patch('/orders/:id', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+    const { items, tableNumber, totalAmount, status } = req.body;
+
+    const updateFields: any = {};
+    if (items !== undefined) {
+      updateFields.items = typeof items === 'string' ? items : JSON.stringify(items);
+    }
+    if (tableNumber !== undefined) {
+      updateFields.tableNumber = tableNumber;
+    }
+    if (totalAmount !== undefined) {
+      updateFields.totalAmount = parseFloat(totalAmount);
+    }
+    if (status !== undefined) {
+      if (!['pending', 'preparing', 'delivered', 'cancelled'].includes(status)) {
+        res.status(400).json({ error: 'Invalid order status' });
+        return;
+      }
+      updateFields.status = status;
+    }
+
+    if (Object.keys(updateFields).length === 0) {
+      res.status(400).json({ error: 'No fields to update' });
+      return;
+    }
+
+    const updated = await db.update(restaurantOrders)
+      .set(updateFields)
+      .where(and(eq(restaurantOrders.id, id), eq(restaurantOrders.hotelId, hotelId)))
+      .returning();
+
+    if (updated.length === 0) {
+      res.status(404).json({ error: 'Order not found' });
+      return;
+    }
+
+    res.json(updated[0]);
+  } catch (error) {
+    console.error('Update restaurant order error:', error);
+    res.status(500).json({ error: 'Failed to update order' });
+  }
+});
+
 // Update order/KOT status
 router.patch('/orders/:id/status', async (req: AuthRequest, res) => {
   try {

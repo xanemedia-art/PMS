@@ -16,6 +16,13 @@ export const hotels = pgTable('hotels', {
   subscriptionDues: real('subscription_dues').default(0),
   subscriptionPrice: real('subscription_price').default(6000.0),
   slug: text('slug').unique(),
+  gstin: text('gstin'),
+  billingStateName: text('billing_state_name'),
+  billingStateCode: text('billing_state_code'),
+  roomGstRate: real('room_gst_rate').default(12.0),
+  foodGstRate: real('food_gst_rate').default(5.0),
+  roomSacCode: text('room_sac_code').default('996311'),
+  foodSacCode: text('food_sac_code').default('99633'),
 });
 
 // 2. Users (Includes Admins, Staff, and Agents restricted per hotel)
@@ -95,6 +102,17 @@ export const invoices = pgTable('invoices', {
   totalAmount: real('total_amount').notNull(),
   status: text('status', { enum: ['unpaid', 'paid'] }).default('unpaid'),
   issuedAt: timestamp('issued_at').defaultNow(),
+  invoiceNumber: text('invoice_number'),
+  gstin: text('gstin'),
+  billingStateName: text('billing_state_name'),
+  billingStateCode: text('billing_state_code'),
+  guestGstin: text('guest_gstin'),
+  guestStateName: text('guest_state_name'),
+  guestStateCode: text('guest_state_code'),
+  cgstAmount: real('cgst_amount').default(0.0),
+  sgstAmount: real('sgst_amount').default(0.0),
+  igstAmount: real('igst_amount').default(0.0),
+  transactionType: text('transaction_type').default('intra_state'),
 });
 
 // 8. Housekeeping Tasks
@@ -191,6 +209,19 @@ export const agentRoomPrices = pgTable('agent_room_prices', {
   agentId: integer('agent_id').references(() => users.id).notNull(),
   roomTypeId: integer('room_type_id').references(() => roomTypes.id).notNull(),
   price: real('price').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// 17. Booking-wise Custom Added Expenses
+export const bookingExpenses = pgTable('booking_expenses', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  bookingId: integer('booking_id').references(() => bookings.id).notNull(),
+  name: text('name').notNull(),
+  amount: real('amount').notNull(),
+  sacCode: text('sac_code').default('999799'),
+  gstRate: real('gst_rate').default(18.0),
+  quantity: integer('quantity').default(1),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

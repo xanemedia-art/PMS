@@ -19,7 +19,18 @@ export default function SettingsPage() {
   const [profileData, setProfileData] = useState({ name: '', email: '', password: '' });
   
   // Hotel State
-  const [hotelData, setHotelData] = useState({ name: '', address: '' });
+  const emptyHotelData = {
+    name: '',
+    address: '',
+    gstin: '',
+    billingStateName: '',
+    billingStateCode: '',
+    roomGstRate: '12.0',
+    foodGstRate: '5.0',
+    roomSacCode: '996311',
+    foodSacCode: '99633'
+  };
+  const [hotelData, setHotelData] = useState(emptyHotelData);
   const [editingHotelId, setEditingHotelId] = useState<number | null>(null);
   const [isHotelDialogOpen, setIsHotelDialogOpen] = useState(false);
 
@@ -249,12 +260,12 @@ export default function SettingsPage() {
       const orderData = await res.json();
 
       const options = {
-        key: 'rzp_live_SufeFLg6s8EJfH',
-        amount: orderData.amount * 100, // in paise
+        key: subscriptionData?.razorpayKeyId || 'rzp_live_SufeFLg6s8EJfH',
+        amount: orderData.amount, // already in paise
         currency: orderData.currency,
         name: 'PMS Subscription',
         description: `Subscription Renewal for ${hotelsList.find((h: any) => h.id === user?.hotelId)?.name || 'Property'}`,
-        order_id: orderData.orderId,
+        order_id: orderData.id,
         handler: async function (response: any) {
           try {
             const verifyRes = await fetch('/api/subscription/verify-payment', {
@@ -342,7 +353,7 @@ export default function SettingsPage() {
       queryClient.invalidateQueries({ queryKey: ['hotels'] });
       setIsHotelDialogOpen(false);
       setEditingHotelId(null);
-      setHotelData({ name: '', address: '' });
+      setHotelData(emptyHotelData);
       alert('Property details saved successfully');
     },
     onError: (err: any) => alert(err.message)
@@ -500,10 +511,19 @@ export default function SettingsPage() {
   // Helper to get room type name
   const getRoomTypeName = (id: number) => roomTypes.find((t: any) => t.id === id)?.name || 'Unknown';
 
+  const isExpired = subscriptionData?.subscriptionStatus === 'expired';
+
   const [activeTab, setActiveTab] = useState(() => {
     const searchParams = new URLSearchParams(window.location.search);
     return searchParams.get('tab') || 'profile';
   });
+
+  // Force active tab to billing if expired
+  React.useEffect(() => {
+    if (isExpired && activeTab !== 'billing') {
+      setActiveTab('billing');
+    }
+  }, [isExpired, activeTab]);
 
   return (
     <div className="space-y-6">
@@ -514,15 +534,21 @@ export default function SettingsPage() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="bg-slate-100/50 p-1 border border-slate-200">
-          <TabsTrigger value="profile" className="gap-2"><User className="w-4 h-4" /> Profile</TabsTrigger>
+          {!isExpired && (
+            <TabsTrigger value="profile" className="gap-2"><User className="w-4 h-4" /> Profile</TabsTrigger>
+          )}
           {(user?.role === 'admin' || user?.role === 'manager') && (
             <>
-              <TabsTrigger value="hotel" className="gap-2"><Hotel className="w-4 h-4" /> Properties</TabsTrigger>
-              <TabsTrigger value="inventory" className="gap-2"><Database className="w-4 h-4" /> Inventory</TabsTrigger>
+              {!isExpired && (
+                <>
+                  <TabsTrigger value="hotel" className="gap-2"><Hotel className="w-4 h-4" /> Properties</TabsTrigger>
+                  <TabsTrigger value="inventory" className="gap-2"><Database className="w-4 h-4" /> Inventory</TabsTrigger>
+                </>
+              )}
               <TabsTrigger value="billing" className="gap-2"><CreditCard className="w-4 h-4" /> Subscription & Billing</TabsTrigger>
             </>
           )}
-          {user?.role === 'admin' && (
+          {user?.role === 'admin' && !isExpired && (
             <TabsTrigger value="team" className="gap-2"><Users className="w-4 h-4" /> Team</TabsTrigger>
           )}
         </TabsList>
@@ -586,7 +612,7 @@ export default function SettingsPage() {
               </div>
               <Button onClick={() => {
                 setEditingHotelId(null);
-                setHotelData({ name: '', address: '' });
+                setHotelData(emptyHotelData);
                 setIsHotelDialogOpen(true);
               }} className="gap-2">
                 <Plus className="w-4 h-4" /> Add Property
@@ -637,7 +663,14 @@ export default function SettingsPage() {
                               setEditingHotelId(hotelItem.id);
                               setHotelData({
                                 name: hotelItem.name,
-                                address: hotelItem.address || ''
+                                address: hotelItem.address || '',
+                                gstin: hotelItem.gstin || '',
+                                billingStateName: hotelItem.billingStateName || '',
+                                billingStateCode: hotelItem.billingStateCode || '',
+                                roomGstRate: (hotelItem.roomGstRate ?? 12.0).toString(),
+                                foodGstRate: (hotelItem.foodGstRate ?? 5.0).toString(),
+                                roomSacCode: hotelItem.roomSacCode || '996311',
+                                foodSacCode: hotelItem.foodSacCode || '99633'
                               });
                               setIsHotelDialogOpen(true);
                             }}
@@ -1295,7 +1328,7 @@ export default function SettingsPage() {
         setIsHotelDialogOpen(open);
         if (!open) {
           setEditingHotelId(null);
-          setHotelData({ name: '', address: '' });
+          setHotelData(emptyHotelData);
         }
       }}>
         <DialogContent>
@@ -1314,6 +1347,40 @@ export default function SettingsPage() {
             <div className="space-y-2">
               <Label>Address</Label>
               <Input placeholder="e.g. 123 Luxury Way" value={hotelData.address} onChange={e => setHotelData({...hotelData, address: e.target.value})} />
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>GSTIN</Label>
+                <Input placeholder="e.g. 27AAAAA1111A1Z1" value={hotelData.gstin} onChange={e => setHotelData({...hotelData, gstin: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label>Billing State Name</Label>
+                <Input placeholder="e.g. Maharashtra" value={hotelData.billingStateName} onChange={e => setHotelData({...hotelData, billingStateName: e.target.value})} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>State Code</Label>
+                <Input placeholder="e.g. 27" value={hotelData.billingStateCode} onChange={e => setHotelData({...hotelData, billingStateCode: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label>Room GST Rate (%)</Label>
+                <Input type="number" step="0.1" value={hotelData.roomGstRate} onChange={e => setHotelData({...hotelData, roomGstRate: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label>Food GST Rate (%)</Label>
+                <Input type="number" step="0.1" value={hotelData.foodGstRate} onChange={e => setHotelData({...hotelData, foodGstRate: e.target.value})} />
+              </div>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label>Room SAC Code</Label>
+                <Input value={hotelData.roomSacCode} onChange={e => setHotelData({...hotelData, roomSacCode: e.target.value})} />
+              </div>
+              <div className="space-y-2">
+                <Label>Food SAC Code</Label>
+                <Input value={hotelData.foodSacCode} onChange={e => setHotelData({...hotelData, foodSacCode: e.target.value})} />
+              </div>
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsHotelDialogOpen(false)}>Cancel</Button>
