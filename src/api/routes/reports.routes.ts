@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { bookings, rooms, users, roomTypes, plans, invoices } from '../../db/schema.js';
+import { bookings, rooms, users, roomTypes, plans, invoices, expenses } from '../../db/schema.js';
 import { eq, and, sql, gte, lte } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
@@ -211,6 +211,121 @@ router.get('/agents', async (req: AuthRequest, res) => {
   } catch (error) {
     console.error('Failed to generate agent report:', error);
     res.status(500).json({ error: 'Failed to generate travel agents report' });
+  }
+});
+
+// GET /financials
+// Fetch yearly and monthly P&L summaries based on paid invoices (revenue) and expenses (losses)
+router.get('/financials', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+
+    // 1. Fetch all paid invoices
+    const allPaidInvoices = await db.select({
+      id: invoices.id,
+      totalAmount: invoices.totalAmount,
+      baseAmount: invoices.baseAmount,
+      taxAmount: invoices.taxAmount,
+      issuedAt: invoices.issuedAt
+    })
+    .from(invoices)
+    .where(and(
+      eq(invoices.hotelId, hotelId),
+      eq(invoices.status, 'paid')
+    ));
+
+    // 2. Fetch all expenses
+    const allExpenses = await db.select({
+      id: expenses.id,
+      name: expenses.name,
+      type: expenses.type,
+      amount: expenses.amount,
+      description: expenses.description,
+      createdAt: expenses.createdAt
+    })
+    .from(expenses)
+    .where(eq(expenses.hotelId, hotelId));
+
+    // Compile statistics grouped by year and month
+    const monthlyData: Record<string, { income: number; expenses: number; profit: number }> = {};
+    const yearlyData: Record<string, { income: number; expenses: number; profit: number }> = {};
+
+    allPaidInvoices.forEach((inv) => {
+      const date = new Date(inv.issuedAt);
+      const year = date.getFullYear().toString();
+      const month = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      const amount = Number(inv.totalAmount) || 0;
+
+      // Monthly
+      if (!monthlyData[month]) {
+        monthlyData[month] = { income: 0, expenses: 0, profit: 0 };
+      }
+      monthlyData[month].income += amount;
+      monthlyData[month].profit += amount;
+
+      // Yearly
+      if (!yearlyData[year]) {
+        yearlyData[year] = { income: 0, expenses: 0, profit: 0 };
+      }
+      yearlyData[year].income += amount;
+      yearlyData[year].profit += amount;
+    });
+
+    allExpenses.forEach((exp) => {
+      const date = new Date(exp.createdAt || new Date());
+      const year = date.getFullYear().toString();
+      const month = `${year}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
+      const amount = Number(exp.amount) || 0;
+
+      // Monthly
+      if (!monthlyData[month]) {
+        monthlyData[month] = { income: 0, expenses: 0, profit: 0 };
+      }
+      monthlyData[month].expenses += amount;
+      monthlyData[month].profit -= amount;
+
+      // Yearly
+      if (!yearlyData[year]) {
+        yearlyData[year] = { income: 0, expenses: 0, profit: 0 };
+      }
+      yearlyData[year].expenses += amount;
+      yearlyData[year].profit -= amount;
+    });
+
+    // Format for charts and lists
+    const monthlyList = Object.entries(monthlyData).map(([month, data]) => ({
+      period: month, // e.g. "2026-07"
+      income: Number(data.income.toFixed(2)),
+      expenses: Number(data.expenses.toFixed(2)),
+      profit: Number(data.profit.toFixed(2))
+    })).sort((a, b) => b.period.localeCompare(a.period));
+
+    const yearlyList = Object.entries(yearlyData).map(([year, data]) => ({
+      period: year, // e.g. "2026"
+      income: Number(data.income.toFixed(2)),
+      expenses: Number(data.expenses.toFixed(2)),
+      profit: Number(data.profit.toFixed(2))
+    })).sort((a, b) => b.period.localeCompare(a.period));
+
+    // Calculate overall totals
+    const totalIncome = allPaidInvoices.reduce((sum, inv) => sum + (Number(inv.totalAmount) || 0), 0);
+    const totalExpenses = allExpenses.reduce((sum, exp) => sum + (Number(exp.amount) || 0), 0);
+    const totalProfit = totalIncome - totalExpenses;
+
+    res.json({
+      totals: {
+        income: Number(totalIncome.toFixed(2)),
+        expenses: Number(totalExpenses.toFixed(2)),
+        profit: Number(totalProfit.toFixed(2))
+      },
+      monthly: monthlyList,
+      yearly: yearlyList
+    });
+  } catch (error) {
+    console.error('Failed to calculate financials:', error);
+    res.status(500).json({ error: 'Failed to retrieve financials report' });
   }
 });
 

@@ -31,7 +31,24 @@ export const authenticateToken = (req: AuthRequest, res: Response, next: NextFun
 
 export const requireRole = (roles: string[]) => {
   return (req: AuthRequest, res: Response, next: NextFunction) => {
-    if (!req.user || !roles.includes(req.user.role)) {
+    if (!req.user) {
+      res.status(401).json({ error: 'Forbidden: Insufficient role permissions' });
+      return;
+    }
+
+    const userRole = req.user.role;
+    const allowedRoles = [...roles];
+
+    // management role can access anything allowed for admin or manager
+    if (roles.includes('admin') || roles.includes('manager')) {
+      allowedRoles.push('management');
+    }
+    // front_desk role can access anything allowed for staff
+    if (roles.includes('staff')) {
+      allowedRoles.push('front_desk');
+    }
+
+    if (!allowedRoles.includes(userRole)) {
       res.status(401).json({ error: 'Forbidden: Insufficient role permissions' });
       return;
     }

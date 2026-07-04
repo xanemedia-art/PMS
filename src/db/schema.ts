@@ -32,7 +32,7 @@ export const users = pgTable('users', {
   name: text('name').notNull(),
   email: text('email').notNull().unique(),
   passwordHash: text('password_hash').notNull(),
-  role: text('role', { enum: ['admin', 'manager', 'staff', 'agent'] }).notNull(),
+  role: text('role', { enum: ['admin', 'manager', 'staff', 'agent', 'housekeeping', 'front_desk', 'restaurant', 'management'] }).notNull(),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -88,6 +88,7 @@ export const bookings = pgTable('bookings', {
   agentCommission: real('agent_commission'), // Commission field
   extraBeddings: integer('extra_beddings').default(0),
   notes: text('notes'),
+  showGoogleReview: boolean('show_google_review').default(false),
   createdAt: timestamp('created_at').defaultNow(),
 });
 

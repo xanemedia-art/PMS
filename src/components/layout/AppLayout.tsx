@@ -1,7 +1,176 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X, Coffee, MessageSquare, Lock, CreditCard } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X, Coffee, MessageSquare, Lock, CreditCard, Bell } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+
+function NotificationBell({ token }: { token: string }) {
+  const [notifications, setNotifications] = useState<any[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
+  const [toasts, setToasts] = useState<any[]>([]);
+  const seenIdsRef = useRef<Set<string>>(new Set());
+  const isFirstFetchRef = useRef<boolean>(true);
+  const navigate = useNavigate();
+
+  const fetchNotifications = async () => {
+    try {
+      const res = await fetch('/api/notifications', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setNotifications(data);
+
+      // Check for new notifications to show toast
+      if (Array.isArray(data)) {
+        const newToasts: any[] = [];
+        data.forEach((notif: any) => {
+          if (!seenIdsRef.current.has(notif.id)) {
+            seenIdsRef.current.add(notif.id);
+            if (!isFirstFetchRef.current) {
+              newToasts.push(notif);
+            }
+          }
+        });
+
+        if (newToasts.length > 0) {
+          setToasts(prev => [...prev, ...newToasts]);
+          // Auto remove toasts after 6 seconds
+          newToasts.forEach((notif) => {
+            setTimeout(() => {
+              setToasts(prev => prev.filter(t => t.id !== notif.id));
+            }, 6000);
+          });
+        }
+        isFirstFetchRef.current = false;
+      }
+    } catch (err) {
+      console.error('Failed to fetch notifications:', err);
+    }
+  };
+
+  useEffect(() => {
+    fetchNotifications();
+    const interval = setInterval(fetchNotifications, 10000); // Poll every 10 seconds
+    return () => clearInterval(interval);
+  }, [token]);
+
+  const handleNotificationClick = (notif: any) => {
+    setIsOpen(false);
+    setToasts(prev => prev.filter(t => t.id !== notif.id));
+
+    // Redirect based on type
+    if (notif.type === 'chat') {
+      navigate('/guest-requests');
+    } else if (notif.type === 'order') {
+      navigate('/restaurant');
+    } else if (notif.type === 'housekeeping') {
+      navigate('/housekeeping');
+    }
+  };
+
+  const getIcon = (type: string) => {
+    switch (type) {
+      case 'chat':
+        return <MessageSquare className="w-4 h-4 text-blue-500" />;
+      case 'order':
+        return <Coffee className="w-4 h-4 text-amber-500" />;
+      case 'housekeeping':
+        return <UserRoundCog className="w-4 h-4 text-emerald-500" />;
+      default:
+        return <Bell className="w-4 h-4 text-slate-500" />;
+    }
+  };
+
+  return (
+    <div className="relative">
+      {/* Bell Trigger */}
+      <button 
+        onClick={() => setIsOpen(!isOpen)}
+        className="relative p-2 hover:bg-slate-100 rounded-full transition-colors focus:outline-none flex items-center justify-center"
+      >
+        <Bell className="w-5 h-5 text-slate-600" />
+        {notifications.length > 0 && (
+          <span className="absolute top-1 right-1 w-4 h-4 bg-rose-500 text-white text-[9px] font-black rounded-full flex items-center justify-center border-2 border-white animate-pulse">
+            {notifications.length}
+          </span>
+        )}
+      </button>
+
+      {/* Glassmorphic Dropdown */}
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-35" onClick={() => setIsOpen(false)} />
+          <div className="absolute right-0 mt-2 w-80 bg-white/95 backdrop-blur-md border border-slate-200/80 rounded-2xl shadow-xl z-40 overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+              <span className="font-bold text-slate-800 text-sm flex items-center gap-1.5">
+                <Bell className="w-4 h-4 text-indigo-600" /> Active Requests ({notifications.length})
+              </span>
+              {notifications.length > 0 && (
+                <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider animate-pulse">Live</span>
+              )}
+            </div>
+
+            <div className="max-h-72 overflow-y-auto divide-y divide-slate-100">
+              {notifications.length === 0 ? (
+                <div className="p-6 text-center text-xs text-slate-400 italic">
+                  No active guest requests.
+                </div>
+              ) : (
+                notifications.map((notif) => (
+                  <div 
+                    key={notif.id}
+                    onClick={() => handleNotificationClick(notif)}
+                    className="p-3.5 hover:bg-slate-50/80 transition-colors cursor-pointer flex gap-3 items-start text-left"
+                  >
+                    <div className="p-2 bg-slate-50 rounded-xl border border-slate-100 mt-0.5">
+                      {getIcon(notif.type)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-bold text-slate-700">{notif.title}</p>
+                      <p className="text-xs text-slate-500 mt-1 leading-normal break-words">{notif.message}</p>
+                      <p className="text-[10px] text-slate-400 font-medium mt-1.5">
+                        {new Date(notif.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Floating Toast Popups container */}
+      <div className="fixed bottom-6 right-6 z-[9999] space-y-3 w-80 pointer-events-none">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            onClick={() => handleNotificationClick(toast)}
+            className="p-4 bg-slate-900/95 backdrop-blur-md border border-slate-800 text-white rounded-2xl shadow-2xl flex gap-3 items-start cursor-pointer pointer-events-auto transform translate-y-0 transition-transform duration-300 animate-in slide-in-from-bottom-5 fade-in duration-300"
+          >
+            <div className="p-2 bg-slate-850 rounded-xl text-white mt-0.5">
+              {getIcon(toast.type)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-black uppercase text-indigo-400 tracking-wider">New Request</p>
+              <p className="text-sm font-bold mt-0.5">{toast.title}</p>
+              <p className="text-xs text-slate-300 mt-1 font-medium">{toast.message}</p>
+            </div>
+            <button 
+              onClick={(e) => {
+                e.stopPropagation();
+                setToasts(prev => prev.filter(t => t.id !== toast.id));
+              }}
+              className="text-slate-400 hover:text-white p-1 hover:bg-slate-800 rounded-lg transition-colors align-self-start"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function AppLayout() {
   const { user, token, login, logout } = useAuth();
@@ -206,9 +375,36 @@ export default function AppLayout() {
 
   const visibleNavItems = navItems.filter(item => {
     if (!user) return false;
-    const hasRole = item.roles.includes(user.role);
-    if (!hasRole) return false;
-    if (user.role === 'super_admin') return true;
+    
+    const userRole = user.role;
+    let allowed = false;
+
+    if (userRole === 'super_admin') {
+      allowed = true;
+    } else {
+      // 1. management role can access anything allowed for admin or manager
+      if (userRole === 'management' && (item.roles.includes('admin') || item.roles.includes('manager'))) {
+        allowed = true;
+      }
+      // 2. front_desk role can access anything allowed for staff
+      else if (userRole === 'front_desk' && item.roles.includes('staff')) {
+        allowed = true;
+      }
+      // 3. housekeeping role can only access Guest Requests and Housekeeping
+      else if (userRole === 'housekeeping' && ['/housekeeping', '/guest-requests'].includes(item.path)) {
+        allowed = true;
+      }
+      // 4. restaurant role can only access Restaurant and Guest Requests
+      else if (userRole === 'restaurant' && ['/restaurant', '/guest-requests'].includes(item.path)) {
+        allowed = true;
+      }
+      // 5. Standard exact match for others
+      else if (item.roles.includes(userRole)) {
+        allowed = true;
+      }
+    }
+
+    if (!allowed) return false;
 
     if (item.feature) {
       const activeFeatures = user.features ? user.features.split(',') : [];
@@ -298,21 +494,28 @@ export default function AppLayout() {
             </h2>
           </div>
           
-          {/* Property Switcher */}
-          {hotelsList.length > 1 && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Active Property:</span>
-              <select
-                value={user?.hotelId || ''}
-                onChange={(e) => handleSwitchHotel(parseInt(e.target.value))}
-                className="bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-3 py-1.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {hotelsList.map(h => (
-                  <option key={h.id} value={h.id}>{h.name}</option>
-                ))}
-              </select>
-            </div>
-          )}
+          <div className="flex items-center gap-4">
+            {/* Notification Bell */}
+            {user && user.role !== 'agent' && user.role !== 'super_admin' && (
+              <NotificationBell token={token} />
+            )}
+
+            {/* Property Switcher */}
+            {hotelsList.length > 1 && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500 font-semibold uppercase tracking-wider">Active Property:</span>
+                <select
+                  value={user?.hotelId || ''}
+                  onChange={(e) => handleSwitchHotel(parseInt(e.target.value))}
+                  className="bg-slate-50 border border-slate-200 text-slate-800 rounded-lg px-3 py-1.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {hotelsList.map(h => (
+                    <option key={h.id} value={h.id}>{h.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
         </header>
 
         <div className="flex-1 overflow-auto p-4 md:p-8">

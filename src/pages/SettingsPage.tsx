@@ -1108,9 +1108,13 @@ export default function SettingsPage() {
                   value={newTeamMember.role}
                   onChange={e => setNewTeamMember({...newTeamMember, role: e.target.value})}
                 >
-                  <option value="staff">Staff</option>
-                  <option value="manager">Manager</option>
+                  <option value="front_desk">Front Desk</option>
+                  <option value="housekeeping">Housekeeping</option>
+                  <option value="restaurant">Restaurant</option>
+                  <option value="management">Management</option>
                   <option value="agent">Agent</option>
+                  <option value="staff">Staff (Legacy)</option>
+                  <option value="manager">Manager (Legacy)</option>
                 </select>
               </div>
             </div>

@@ -620,6 +620,13 @@ router.get('/invoices/:invoiceId', async (req: AuthRequest, res) => {
     }
 
     const info = invResult[0];
+    
+    // Security restriction for agents: only allow viewing their own bookings' invoices
+    if (req.user!.role === 'agent' && info.bookedById !== req.user!.userId) {
+      res.status(403).json({ error: 'Forbidden: You can only access invoices for bookings created by you.' });
+      return;
+    }
+    
     const b = info.invoice;
 
     // Fetch dynamic configs at invoice generation time or configurations
@@ -728,7 +735,11 @@ router.get('/invoices/:invoiceId', async (req: AuthRequest, res) => {
     const items = [roomItem, ...orderItems, ...expenseItems];
 
     res.json({
-      invoice: b,
+      invoice: {
+        ...b,
+        hotelName: hotelConf?.name || 'Xane Partner Hotel',
+        hotelAddress: hotelConf?.address || 'India'
+      },
       guest: {
         name: info.guestName,
         phone: info.guestPhone,

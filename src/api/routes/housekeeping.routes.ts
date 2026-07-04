@@ -33,7 +33,7 @@ router.get('/', async (req: AuthRequest, res) => {
 });
 
 // Update housekeeping status
-router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (req: AuthRequest, res) => {
+router.patch('/:id/status', requireRole(['admin', 'manager', 'staff', 'housekeeping']), async (req: AuthRequest, res) => {
   try {
     const hotelId = req.user!.hotelId;
     const id = parseInt(req.params.id);

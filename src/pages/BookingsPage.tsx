@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight, User, Users, Coffee } from 'lucide-react';
+import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight, User, Users, Coffee, TrendingUp, Star, Download, ReceiptText, FileText } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function BookingsPage() {
@@ -16,6 +16,16 @@ export default function BookingsPage() {
   const queryClient = useQueryClient();
   const [showArchive, setShowArchive] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
+  const [assignRoomBooking, setAssignRoomBooking] = useState<any>(null);
+  const [selectedRoomToAssign, setSelectedRoomToAssign] = useState<string>('');
+
+  const availableRoomsForBooking = useMemo(() => {
+    if (!assignRoomBooking || !rooms.length) return [];
+    return rooms.filter((r: any) => 
+      r.roomTypeId === assignRoomBooking.roomTypeId && 
+      r.status === 'available'
+    );
+  }, [assignRoomBooking, rooms]);
 
   // Agent availability sheet state
   const todayStr = new Date().toISOString().split('T')[0];
@@ -74,6 +84,95 @@ export default function BookingsPage() {
     },
     enabled: user?.role === 'agent',
     staleTime: 60000,
+  });
+
+  const { data: agentReport = null, isLoading: myReportLoading } = useQuery({
+    queryKey: ['agentSelfReport'],
+    queryFn: async () => {
+      const res = await fetch('/api/agents/my-report', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to fetch agent report');
+      return res.json();
+    },
+    enabled: user?.role === 'agent',
+    staleTime: 10000,
+  });
+
+  const handleDownloadAgentPdf = async (invoiceId: number) => {
+    try {
+      const res = await fetch(`/api/billing/invoices/${invoiceId}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to fetch invoice details');
+      const invoiceData = await res.json();
+      
+      const invoiceObj = {
+        invoiceNumber: invoiceData.invoice.invoiceNumber,
+        issuedAt: invoiceData.invoice.issuedAt,
+        baseAmount: invoiceData.invoice.baseAmount,
+        extrasAmount: invoiceData.invoice.extrasAmount,
+        taxAmount: invoiceData.invoice.taxAmount,
+        totalAmount: invoiceData.invoice.totalAmount,
+        gstin: invoiceData.invoice.gstin,
+        billingStateName: invoiceData.invoice.billingStateName,
+        billingStateCode: invoiceData.invoice.billingStateCode,
+        guestGstin: invoiceData.invoice.guestGstin,
+        guestStateName: invoiceData.invoice.guestStateName,
+        guestStateCode: invoiceData.invoice.guestStateCode,
+        cgstAmount: invoiceData.invoice.cgstAmount,
+        sgstAmount: invoiceData.invoice.sgstAmount,
+        igstAmount: invoiceData.invoice.igstAmount,
+        transactionType: invoiceData.invoice.transactionType,
+        hotelName: invoiceData.invoice.hotelName,
+        hotelAddress: invoiceData.invoice.hotelAddress
+      };
+
+      const { exportGstInvoicePdf } = await import('../utils/pdfExport');
+      exportGstInvoicePdf(invoiceObj, invoiceData.guest, invoiceData.items);
+    } catch (err: any) {
+      alert(`Could not generate invoice PDF: ${err.message}`);
+    }
+  };
+
+  const generateBillMutation = useMutation({
+    mutationFn: async (bookingId: number) => {
+      const res = await fetch(`/api/agents/bookings/${bookingId}/generate-bill`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to generate bill');
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['agentSelfReport'] });
+      // Trigger PDF download
+      handleDownloadAgentPdf(data.invoice.id);
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const toggleReviewMutation = useMutation({
+    mutationFn: async (bookingId: number) => {
+      const res = await fetch(`/api/bookings/${bookingId}/toggle-review`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to toggle review visibility');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+    },
+    onError: (err: any) => alert(err.message)
   });
 
   const loading = bookingsLoading || roomsLoading || plansLoading;
@@ -534,6 +633,8 @@ export default function BookingsPage() {
           <TabsTrigger value="list">List View</TabsTrigger>
           <TabsTrigger value="month">Month View</TabsTrigger>
           <TabsTrigger value="availability">Room Availability</TabsTrigger>
+          {user?.role === 'agent' && <TabsTrigger value="agent-reports">Reports</TabsTrigger>}
+          {user?.role !== 'agent' && <TabsTrigger value="guests">Guests</TabsTrigger>}
         </TabsList>
 
 
@@ -737,8 +838,16 @@ export default function BookingsPage() {
                         </TableCell>
                         <TableCell className="text-right space-x-2" onClick={(e) => e.stopPropagation()}>
                           {booking.status === 'confirmed' && user?.role !== 'agent' && (
-                            <Button variant="outline" size="sm" onClick={() => updateStatusMutation.mutate({ bookingId: booking.id, status: 'checked_in' })}>
-                              Check In {(!booking.roomId) ? '(Auto-Assign)' : ''}
+                            <Button 
+                              variant="outline" 
+                              size="sm" 
+                              className="border-indigo-200 text-indigo-700 hover:bg-indigo-50"
+                              onClick={() => {
+                                setAssignRoomBooking(booking);
+                                setSelectedRoomToAssign(booking.roomId ? booking.roomId.toString() : '');
+                              }}
+                            >
+                              Check In (Assign Room)
                             </Button>
                           )}
                           {booking.status === 'checked_in' && user?.role !== 'agent' && (
@@ -893,6 +1002,81 @@ export default function BookingsPage() {
                   </div>
                 </div>
               )}
+            </DialogContent>
+          </Dialog>
+
+          {/* Manual Room Assignment Dialog */}
+          <Dialog open={!!assignRoomBooking} onOpenChange={(open) => {
+            if (!open) {
+              setAssignRoomBooking(null);
+              setSelectedRoomToAssign('');
+            }
+          }}>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <BedDouble className="w-5 h-5 text-indigo-600" />
+                  <span>Assign Room & Check In</span>
+                </DialogTitle>
+                <DialogDescription>
+                  Select a room from the inventory for <strong>{assignRoomBooking?.guestName}</strong>.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 text-xs space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-slate-400 font-semibold uppercase">Room Type Booked:</span>
+                    <span className="font-bold text-slate-700">
+                      {assignRoomBooking && (rooms.find((r: any) => r.id === assignRoomBooking.roomId)?.roomType?.name || rooms.find((r: any) => r.roomTypeId === assignRoomBooking.roomTypeId)?.roomType?.name || 'Selected Type')}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-400 font-semibold uppercase">Stay Dates:</span>
+                    <span className="font-bold text-slate-700">
+                      {assignRoomBooking?.checkInDate} to {assignRoomBooking?.checkOutDate}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">Select Available Room</Label>
+                  {availableRoomsForBooking.length > 0 ? (
+                    <select
+                      className="flex h-11 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      value={selectedRoomToAssign}
+                      onChange={(e) => setSelectedRoomToAssign(e.target.value)}
+                    >
+                      <option value="">-- Choose Vacant Room --</option>
+                      {availableRoomsForBooking.map((r: any) => (
+                        <option key={r.id} value={r.id.toString()}>Room {r.number} (Vacant)</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="bg-rose-50 border border-rose-100 rounded-xl p-4 text-rose-700 text-xs space-y-1">
+                      <p className="font-bold">⚠️ No Vacant Rooms Available</p>
+                      <p>All rooms of this category are occupied or dirty. Please update housekeeping tasks or check out existing guests first.</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setAssignRoomBooking(null); setSelectedRoomToAssign(''); }}>Cancel</Button>
+                <Button 
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold" 
+                  disabled={!selectedRoomToAssign}
+                  onClick={() => {
+                    updateStatusMutation.mutate({ 
+                      bookingId: assignRoomBooking.id, 
+                      status: 'checked_in', 
+                      roomId: selectedRoomToAssign 
+                    });
+                    setAssignRoomBooking(null);
+                    setSelectedRoomToAssign('');
+                  }}
+                >
+                  Confirm Check In
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </TabsContent>
@@ -1145,6 +1329,236 @@ export default function BookingsPage() {
             </Card>
           </div>
         </TabsContent>
+
+        {/* Travel Agent Reports Tab */}
+        {user?.role === 'agent' && (
+          <TabsContent value="agent-reports" className="space-y-6 animate-in fade-in duration-300">
+            {myReportLoading ? (
+              <div className="p-8 text-center text-slate-400 animate-pulse italic">
+                Compiling agent performance metrics...
+              </div>
+            ) : agentReport ? (
+              <div className="space-y-6">
+                {/* Metric cards */}
+                <div className="grid gap-6 md:grid-cols-3">
+                  <Card className="border border-slate-200 shadow-sm bg-gradient-to-br from-indigo-50/50 to-white">
+                    <CardContent className="py-5 px-6 flex items-center gap-4">
+                      <div className="p-3 rounded-xl bg-indigo-100 text-indigo-600">
+                        <CalendarDays className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Stays Booked</p>
+                        <p className="text-3xl font-extrabold text-slate-800 mt-1">{agentReport.totalBookings}</p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                  
+                  <Card className="border border-slate-200 shadow-sm bg-gradient-to-br from-emerald-50/50 to-white">
+                    <CardContent className="py-5 px-6 flex items-center gap-4">
+                      <div className="p-3 rounded-xl bg-emerald-100 text-emerald-600">
+                        <TrendingUp className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Revenue Generated</p>
+                        <p className="text-3xl font-extrabold text-emerald-600 mt-1">
+                          ₹{Number(agentReport.totalRevenue || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card className="border border-slate-200 shadow-sm bg-gradient-to-br from-amber-50/50 to-white">
+                    <CardContent className="py-5 px-6 flex items-center gap-4">
+                      <div className="p-3 rounded-xl bg-amber-100 text-amber-600">
+                        <Star className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Avg Stay Value</p>
+                        <p className="text-3xl font-extrabold text-slate-800 mt-1">
+                          ₹{Number(agentReport.totalBookings > 0 ? (agentReport.totalRevenue / agentReport.totalBookings) : 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        </p>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Booking list */}
+                <Card className="border border-slate-200 shadow-sm overflow-hidden">
+                  <CardHeader className="pb-3 border-b border-slate-100">
+                    <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-indigo-600" />
+                      <span>Guest Bookings & Invoices</span>
+                    </CardTitle>
+                    <CardDescription>View all guest reservations and download or generate bills.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto w-full">
+                      <Table>
+                        <TableHeader className="bg-slate-50">
+                          <TableRow>
+                            <TableHead className="pl-6">Guest Details</TableHead>
+                            <TableHead>Room Type</TableHead>
+                            <TableHead>Check In</TableHead>
+                            <TableHead>Check Out</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead className="text-right">Total Billing</TableHead>
+                            <TableHead className="text-right pr-6">Invoice Action</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {agentReport.bookings.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={7} className="text-center py-8 text-slate-400 italic">
+                                No guest bookings found for your travel agent account.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            agentReport.bookings.map((b: any) => (
+                              <TableRow key={b.id} className="hover:bg-slate-50/50">
+                                <TableCell className="pl-6">
+                                  <div className="font-bold text-slate-800">{b.guestName}</div>
+                                  <div className="text-xs text-slate-400 mt-0.5">{b.guestPhone || 'No contact'}</div>
+                                </TableCell>
+                                <TableCell className="font-medium text-slate-600">{b.roomTypeName || 'TBD'}</TableCell>
+                                <TableCell className="text-slate-500">{new Date(b.checkInDate).toLocaleDateString('en-IN')}</TableCell>
+                                <TableCell className="text-slate-500">{new Date(b.checkOutDate).toLocaleDateString('en-IN')}</TableCell>
+                                <TableCell>
+                                  <Badge variant="outline" className={statusColors[b.status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}>
+                                    {b.status.replace('_', ' ')}
+                                  </Badge>
+                                </TableCell>
+                                <TableCell className="text-right font-bold text-slate-900">
+                                  {b.totalAmount !== null ? `₹${Number(b.totalAmount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'}
+                                </TableCell>
+                                <TableCell className="text-right pr-6">
+                                  {b.invoiceId ? (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      className="border-indigo-200 text-indigo-700 hover:bg-indigo-50 flex items-center gap-1.5 ml-auto"
+                                      onClick={() => handleDownloadAgentPdf(b.invoiceId)}
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                      <span>Download Bill</span>
+                                    </Button>
+                                  ) : (
+                                    <Button
+                                      variant="default"
+                                      size="sm"
+                                      className="bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1.5 ml-auto"
+                                      onClick={() => generateBillMutation.mutate(b.id)}
+                                      disabled={generateBillMutation.isPending}
+                                    >
+                                      <ReceiptText className="w-3.5 h-3.5" />
+                                      <span>Generate Bill</span>
+                                    </Button>
+                                  )}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            ) : (
+              <div className="p-8 text-center text-slate-400 italic">
+                Failed to compile agent report. Please try again later.
+              </div>
+            )}
+          </TabsContent>
+        )}
+
+        {/* Admin Guests Listing Tab */}
+        {user?.role !== 'agent' && (
+          <TabsContent value="guests" className="space-y-6 animate-in fade-in duration-300">
+            <Card className="border border-slate-200 shadow-sm overflow-hidden">
+              <CardHeader className="pb-3 border-b border-slate-100 bg-slate-50/50">
+                <CardTitle className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  <span>Guest Feedback & Google Reviews</span>
+                </CardTitle>
+                <CardDescription>
+                  Manage which guests are allowed to see the Google Review invitation button on their portal.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto w-full">
+                  <Table>
+                    <TableHeader className="bg-slate-50">
+                      <TableRow>
+                        <TableHead className="pl-6">Guest Details</TableHead>
+                        <TableHead>Room / Type</TableHead>
+                        <TableHead>Check In</TableHead>
+                        <TableHead>Check Out</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead className="text-right pr-6">Google Review Access</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {bookings.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={6} className="text-center py-8 text-slate-400 italic">
+                            No guests found.
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        (() => {
+                          const guestBookings = bookings.filter((b: any) => ['confirmed', 'checked_in', 'checked_out'].includes(b.status));
+                          if (guestBookings.length === 0) {
+                            return (
+                              <TableRow>
+                                <TableCell colSpan={6} className="text-center py-8 text-slate-400 italic">
+                                  No active or checked out guests to display.
+                                </TableCell>
+                              </TableRow>
+                            );
+                          }
+                          return guestBookings.map((b: any) => (
+                            <TableRow key={b.id} className="hover:bg-slate-50/50">
+                              <TableCell className="pl-6">
+                                <div className="font-bold text-slate-800">{b.guestName}</div>
+                                <div className="text-xs text-slate-400 mt-0.5">{b.guestEmail || b.guestPhone || 'No contact info'}</div>
+                              </TableCell>
+                              <TableCell className="font-medium text-slate-600">
+                                {getRoomDisplay(b)}
+                              </TableCell>
+                              <TableCell className="text-slate-500">{new Date(b.checkInDate).toLocaleDateString('en-IN')}</TableCell>
+                              <TableCell className="text-slate-500">{new Date(b.checkOutDate).toLocaleDateString('en-IN')}</TableCell>
+                              <TableCell>
+                                <Badge variant="outline" className={statusColors[b.status as keyof typeof statusColors] || 'bg-gray-100 text-gray-800'}>
+                                  {b.status.replace('_', ' ')}
+                                </Badge>
+                              </TableCell>
+                              <TableCell className="text-right pr-6">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className={`flex items-center gap-1.5 ml-auto font-semibold transition-all cursor-pointer ${
+                                    b.showGoogleReview
+                                      ? 'bg-amber-50 border-amber-200 text-amber-600 hover:bg-amber-100/70'
+                                      : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                                  }`}
+                                  onClick={() => toggleReviewMutation.mutate(b.id)}
+                                  disabled={toggleReviewMutation.isPending}
+                                >
+                                  <Star className={`w-3.5 h-3.5 ${b.showGoogleReview ? 'fill-amber-500 text-amber-500' : ''}`} />
+                                  <span>{b.showGoogleReview ? 'Allowed' : 'Allow Review'}</span>
+                                </Button>
+                              </TableCell>
+                            </TableRow>
+                          ));
+                        })()
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
       </Tabs>
     </div>
   );

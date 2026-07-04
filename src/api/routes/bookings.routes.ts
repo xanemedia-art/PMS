@@ -388,47 +388,29 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
           }
         })();
     } else if (status === 'checked_in') {
-        let assignedRoomId = updated[0].roomId;
+        const assignedRoomId = roomId || updated[0].roomId;
         
         if (!assignedRoomId) {
-            const b = updated[0];
-            if (!b.roomTypeId) {
-                res.status(400).json({ error: 'Cannot auto-assign room: Booking has no room type' });
-                return;
-            }
-            
-            const availableRoomsOfType = await db.select().from(rooms).where(
-              and(
-                eq(rooms.roomTypeId, b.roomTypeId), 
-                eq(rooms.hotelId, hotelId),
-                eq(rooms.status, 'available')
-              )
-            );
-            
-            const overlapping = await db.select().from(bookings).where(
-              and(
-                eq(bookings.hotelId, hotelId),
-                ne(bookings.status, 'cancelled'),
-                ne(bookings.status, 'checked_out'),
-                ne(bookings.status, 'pending'),
-                lt(bookings.checkInDate, b.checkOutDate),
-                gt(bookings.checkOutDate, b.checkInDate),
-                ne(bookings.id, id)
-              )
-            );
-            
-            const occupiedRoomIds = new Set(overlapping.map(ob => ob.roomId).filter(Boolean));
-            const freeRoom = availableRoomsOfType.find(r => !occupiedRoomIds.has(r.id));
-            
-            if (!freeRoom) {
-               await db.update(bookings).set({ status: 'confirmed' }).where(eq(bookings.id, id));
-               res.status(400).json({ error: 'No available rooms found for automatic assignment.' });
-               return;
-            }
-            
-            assignedRoomId = freeRoom.id;
-            await db.update(bookings).set({ roomId: assignedRoomId }).where(eq(bookings.id, id));
+            // Revert status
+            await db.update(bookings).set({ status: 'confirmed' }).where(eq(bookings.id, id));
+            res.status(400).json({ error: 'Manual room assignment is required for check-in.' });
+            return;
         }
+
+        // Verify the room is available
+        const roomResult = await db.select().from(rooms).where(eq(rooms.id, assignedRoomId)).limit(1);
+        if (roomResult.length === 0) {
+            await db.update(bookings).set({ status: 'confirmed' }).where(eq(bookings.id, id));
+            res.status(400).json({ error: 'Selected room not found.' });
+            return;
+        }
+        if (roomResult[0].status !== 'available' && roomResult[0].id !== updated[0].roomId) {
+            await db.update(bookings).set({ status: 'confirmed' }).where(eq(bookings.id, id));
+            res.status(400).json({ error: `Room ${roomResult[0].number} is not available (Current status: ${roomResult[0].status}).` });
+            return;
+        }
+
+        await db.update(bookings).set({ roomId: assignedRoomId }).where(eq(bookings.id, id));
         const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
         await db.update(rooms).set({ status: 'occupied', guestPin: randomPin }).where(eq(rooms.id, assignedRoomId));
     }
@@ -606,6 +588,32 @@ router.delete('/:id', requireRole(['admin', 'manager']), async (req: AuthRequest
     } else {
       res.status(500).json({ error: 'Failed to delete booking' });
     }
+  }
+});
+
+// POST /:id/toggle-review
+// Toggle whether the guest for this booking can see the Google Review button
+router.post('/:id/toggle-review', requireRole(['admin', 'manager', 'management']), async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+
+    const bookingResult = await db.select().from(bookings).where(and(eq(bookings.id, id), eq(bookings.hotelId, hotelId))).limit(1);
+    if (bookingResult.length === 0) {
+      res.status(404).json({ error: 'Booking not found' });
+      return;
+    }
+
+    const currentVal = bookingResult[0].showGoogleReview || false;
+    const updated = await db.update(bookings)
+      .set({ showGoogleReview: !currentVal })
+      .where(and(eq(bookings.id, id), eq(bookings.hotelId, hotelId)))
+      .returning();
+
+    res.json(updated[0]);
+  } catch (error) {
+    console.error('Toggle review error:', error);
+    res.status(500).json({ error: 'Failed to toggle review visibility' });
   }
 });
 

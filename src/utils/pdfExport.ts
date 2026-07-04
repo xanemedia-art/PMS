@@ -503,3 +503,100 @@ export function exportGstInvoicePdf(
   doc.save(`tax-invoice-${invoice.invoiceNumber || 'temp'}.pdf`);
 }
 
+export function exportProfitLossPdf(data: any, hotelInfo: { name: string; address: string | null }) {
+  const doc = new jsPDF();
+  const hotelName = hotelInfo.name || 'Hotel Workspace';
+  const hotelAddress = hotelInfo.address || 'India';
+
+  // 1. Title Header
+  addDocHeader(doc, 'Financial Profit & Loss Statement', hotelName, hotelAddress);
+
+  // 2. Overview Summary Cards
+  const cardsY = 48;
+  const cardW = 58;
+  const cardH = 16;
+  addMetricCard(doc, 'Total Incomes (Revenue)', `INR ${Number(data.totals.income).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 14, cardsY, cardW, cardH);
+  addMetricCard(doc, 'Total Expenses (Losses)', `INR ${Number(data.totals.expenses).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 76, cardsY, cardW, cardH);
+  addMetricCard(doc, 'Net Profit / (Loss)', `INR ${Number(data.totals.profit).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`, 138, cardsY, cardW, cardH);
+
+  // 3. Monthly Financial Breakdown Table
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42); // slate-900
+  doc.text('Monthly Statement Breakdown', 14, 74);
+
+  const monthlyRows = data.monthly.map((row: any) => [
+    row.period, // e.g. "2026-07"
+    `INR ${Number(row.income).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    `INR ${Number(row.expenses).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    `INR ${Number(row.profit).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+  ]);
+
+  autoTable(doc, {
+    startY: 78,
+    head: [['Month', 'Incomes (Revenue)', 'Expenses (Losses)', 'Net Profit / (Loss)']],
+    body: monthlyRows,
+    styles: {
+      fontSize: 9,
+      cellPadding: 3.5,
+    },
+    headStyles: {
+      fillColor: [15, 23, 42],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold' },
+      1: { halign: 'right' },
+      2: { halign: 'right' },
+      3: { halign: 'right', fontStyle: 'bold' },
+    },
+    theme: 'grid',
+  });
+
+  // 4. Yearly Financial Breakdown Table
+  const finalY = (doc as any).lastAutoTable.finalY + 12;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text('Yearly Summary Breakdown', 14, finalY);
+
+  const yearlyRows = data.yearly.map((row: any) => [
+    row.period,
+    `INR ${Number(row.income).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    `INR ${Number(row.expenses).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`,
+    `INR ${Number(row.profit).toLocaleString('en-IN', { minimumFractionDigits: 2 })}`
+  ]);
+
+  autoTable(doc, {
+    startY: finalY + 4,
+    head: [['Year', 'Incomes (Revenue)', 'Expenses (Losses)', 'Net Profit / (Loss)']],
+    body: yearlyRows,
+    styles: {
+      fontSize: 9,
+      cellPadding: 3.5,
+    },
+    headStyles: {
+      fillColor: [79, 70, 229], // Indigo-600
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+    },
+    columnStyles: {
+      0: { fontStyle: 'bold' },
+      1: { halign: 'right' },
+      2: { halign: 'right' },
+      3: { halign: 'right', fontStyle: 'bold' },
+    },
+    theme: 'grid',
+  });
+
+  // Footer declaration
+  const bottomY = (doc as any).lastAutoTable.finalY + 15;
+  doc.setFont('helvetica', 'italic');
+  doc.setFontSize(8.5);
+  doc.setTextColor(148, 163, 184); // slate-400
+  doc.text('End of financial statement. All figures calculated in INR based on paid invoices and recorded workspace expenses.', 14, bottomY);
+
+  doc.save(`financial-statement-${new Date().getFullYear()}.pdf`);
+}
+

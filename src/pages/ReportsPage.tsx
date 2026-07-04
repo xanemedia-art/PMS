@@ -7,7 +7,7 @@ import { useAuth } from '../context/AuthContext';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
-import { exportHotelRevenuePdf, exportAgentStatementPdf } from '../utils/pdfExport';
+import { exportHotelRevenuePdf, exportAgentStatementPdf, exportProfitLossPdf } from '../utils/pdfExport';
 
 interface ReportData {
   totalRooms: number;
@@ -66,6 +66,19 @@ export default function ReportsPage() {
     staleTime: 60000,
   });
 
+  // 4. Fetch detailed financials (P&L) reports
+  const { data: financialsData = null, isLoading: financialsLoading } = useQuery({
+    queryKey: ['financialsReport'],
+    queryFn: async () => {
+      const res = await fetch('/api/reports/financials', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch financials report');
+      return res.json();
+    },
+    staleTime: 30000,
+  });
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
@@ -100,9 +113,10 @@ export default function ReportsPage() {
       </div>
 
       <Tabs defaultValue="revenue" className="w-full">
-        <TabsList className="grid w-full sm:w-[400px] grid-cols-2 mb-6">
+        <TabsList className="grid w-full sm:w-[600px] grid-cols-3 mb-6">
           <TabsTrigger value="revenue">Revenue Analytics</TabsTrigger>
           <TabsTrigger value="agents">Travel Agent Reports</TabsTrigger>
+          <TabsTrigger value="financials">Financials (P&L)</TabsTrigger>
         </TabsList>
 
         {/* Tab 1: Revenue Reports */}
@@ -287,6 +301,201 @@ export default function ReportsPage() {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* Tab 3: Financials (Profit & Loss) Reports */}
+        <TabsContent value="financials" className="space-y-6 animate-in fade-in duration-300">
+          {financialsLoading ? (
+            <div className="p-8 text-center text-slate-400 animate-pulse italic">
+              Compiling Profit & Loss statement...
+            </div>
+          ) : financialsData ? (
+            <div className="space-y-6">
+              {/* PDF Exporter Action Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-100 shadow-sm">
+                <div>
+                  <h3 className="font-bold text-slate-800 text-sm">Profit & Loss Financial Statement</h3>
+                  <p className="text-slate-500 text-xs mt-0.5">Generate a complete audited PDF report of recorded incomes and expenses.</p>
+                </div>
+                <Button 
+                  onClick={() => exportProfitLossPdf(financialsData, hotelDetails)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-2 self-start sm:self-auto shadow-md shadow-indigo-100 hover:shadow-lg transition-all"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Export Statement (PDF)</span>
+                </Button>
+              </div>
+
+              {/* Summary stat cards */}
+              <div className="grid gap-6 md:grid-cols-3">
+                <Card className="border border-slate-200 shadow-sm bg-gradient-to-br from-emerald-50/50 to-white">
+                  <CardContent className="py-5 px-6 flex items-center gap-4">
+                    <div className="p-3 rounded-xl bg-emerald-100 text-emerald-600">
+                      <TrendingUp className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Incomes (Revenue)</p>
+                      <p className="text-3xl font-extrabold text-emerald-600 mt-1">
+                        ₹{financialsData.totals.income.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className="border border-slate-200 shadow-sm bg-gradient-to-br from-rose-50/50 to-white">
+                  <CardContent className="py-5 px-6 flex items-center gap-4">
+                    <div className="p-3 rounded-xl bg-rose-100 text-rose-600">
+                      <AlertCircle className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Expenses (Losses)</p>
+                      <p className="text-3xl font-extrabold text-rose-600 mt-1">
+                        ₹{financialsData.totals.expenses.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card className={`border border-slate-200 shadow-sm bg-gradient-to-br ${
+                  financialsData.totals.profit >= 0 
+                    ? 'from-blue-50/50 to-white' 
+                    : 'from-amber-50/50 to-white'
+                }`}>
+                  <CardContent className="py-5 px-6 flex items-center gap-4">
+                    <div className={`p-3 rounded-xl ${
+                      financialsData.totals.profit >= 0 
+                        ? 'bg-blue-100 text-blue-600' 
+                        : 'bg-amber-100 text-amber-600'
+                    }`}>
+                      <BarChart3 className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Net Profit / (Loss)</p>
+                      <p className={`text-3xl font-extrabold mt-1 ${
+                        financialsData.totals.profit >= 0 ? 'text-blue-600' : 'text-rose-600'
+                      }`}>
+                        ₹{financialsData.totals.profit.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Monthly visual chart */}
+              {financialsData.monthly.length > 0 && (
+                <Card className="border border-slate-200 shadow-sm">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-base font-bold text-slate-800">Monthly Revenue vs Expense Trend</CardTitle>
+                    <CardDescription>Visual comparison of monthly generated room billing invoices against recorded losses.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="h-80 pr-4">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={financialsData.monthly.slice().reverse()}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                        <XAxis dataKey="period" stroke="#94A3B8" fontSize={11} tickLine={false} />
+                        <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#1E293B', color: '#FFF', borderRadius: '12px', border: 'none' }}
+                          formatter={(value: any) => [`₹${Number(value).toLocaleString('en-IN')}`, '']}
+                        />
+                        <Bar dataKey="income" fill="#10B981" radius={[4, 4, 0, 0]} name="Incomes (Revenue)" />
+                        <Bar dataKey="expenses" fill="#EF4444" radius={[4, 4, 0, 0]} name="Expenses (Losses)" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Detailed Breakdown Tables */}
+              <div className="grid gap-6 md:grid-cols-2">
+                {/* Monthly P&L table */}
+                <Card className="border border-slate-200 shadow-sm overflow-hidden">
+                  <CardHeader className="pb-3 border-b border-slate-100 bg-slate-50">
+                    <CardTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider">Monthly Breakdown</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto w-full">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="pl-6">Month</TableHead>
+                            <TableHead className="text-right">Income</TableHead>
+                            <TableHead className="text-right">Expenses</TableHead>
+                            <TableHead className="text-right pr-6">Profit / (Loss)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {financialsData.monthly.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={4} className="text-center py-6 text-slate-400 italic">
+                                No records found.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            financialsData.monthly.map((m: any) => (
+                              <TableRow key={m.period} className="hover:bg-slate-50/50">
+                                <TableCell className="pl-6 font-bold text-slate-800">{m.period}</TableCell>
+                                <TableCell className="text-right font-medium text-slate-600">₹{m.income.toLocaleString()}</TableCell>
+                                <TableCell className="text-right font-medium text-rose-500">₹{m.expenses.toLocaleString()}</TableCell>
+                                <TableCell className={`text-right font-bold pr-6 ${m.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  ₹{m.profit.toLocaleString()}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                {/* Yearly P&L table */}
+                <Card className="border border-slate-200 shadow-sm overflow-hidden">
+                  <CardHeader className="pb-3 border-b border-slate-100 bg-slate-50">
+                    <CardTitle className="text-sm font-bold text-slate-700 uppercase tracking-wider">Yearly Summary</CardTitle>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <div className="overflow-x-auto w-full">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="pl-6">Year</TableHead>
+                            <TableHead className="text-right">Income</TableHead>
+                            <TableHead className="text-right">Expenses</TableHead>
+                            <TableHead className="text-right pr-6">Profit / (Loss)</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {financialsData.yearly.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={4} className="text-center py-6 text-slate-400 italic">
+                                No records found.
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            financialsData.yearly.map((y: any) => (
+                              <TableRow key={y.period} className="hover:bg-slate-50/50">
+                                <TableCell className="pl-6 font-bold text-slate-800">{y.period}</TableCell>
+                                <TableCell className="text-right font-medium text-slate-600">₹{y.income.toLocaleString()}</TableCell>
+                                <TableCell className="text-right font-medium text-rose-500">₹{y.expenses.toLocaleString()}</TableCell>
+                                <TableCell className={`text-right font-bold pr-6 ${y.profit >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                                  ₹{y.profit.toLocaleString()}
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          ) : (
+            <div className="p-8 text-center text-slate-400 italic">
+              Failed to load P&L statement. Please try again.
+            </div>
+          )}
         </TabsContent>
       </Tabs>
     </div>

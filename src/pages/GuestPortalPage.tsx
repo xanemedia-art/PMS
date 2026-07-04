@@ -22,7 +22,8 @@ import {
   FileText, 
   Trash2, 
   ChevronRight,
-  Edit
+  Edit,
+  Star
 } from 'lucide-react';
 
 export default function GuestPortalPage() {
@@ -144,9 +145,6 @@ export default function GuestPortalPage() {
       }
       if (activeTab === 'bill') {
         try {
-          if (!billDetails) {
-            setBillLoading(true);
-          }
           const res = await fetch('/api/guest/bill', {
             headers: { Authorization: `Bearer ${token}` }
           });
@@ -156,8 +154,6 @@ export default function GuestPortalPage() {
           }
         } catch (err) {
           console.error(err);
-        } finally {
-          setBillLoading(false);
         }
       }
     };
@@ -464,6 +460,42 @@ export default function GuestPortalPage() {
                 </Button>
               </CardContent>
             </Card>
+
+             {/* Google Review Invite Widget */}
+            {bookingDetails?.booking?.showGoogleReview && (
+              <Card className="bg-gradient-to-br from-amber-50 to-white border-amber-250 shadow-md rounded-3xl overflow-hidden relative border animate-in fade-in duration-300">
+                <div className="absolute right-0 bottom-0 opacity-10 transform translate-x-4 translate-y-4">
+                  <Star className="w-36 h-36 text-amber-500 fill-amber-500/20" />
+                </div>
+                <CardContent className="p-6 space-y-4 relative z-10">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 bg-amber-100/80 text-amber-600 rounded-2xl border border-amber-200/50">
+                      <Star className="w-6 h-6 fill-amber-500 text-amber-500 animate-bounce" />
+                    </div>
+                    <div>
+                      <h3 className="font-extrabold text-sm text-slate-800">Share Your Stay Experience</h3>
+                      <p className="text-xs text-[#334155]">Help others discover us with a quick Google Review</p>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-1 justify-center py-1">
+                    {[...Array(5)].map((_, i) => (
+                      <Star key={i} className="w-5 h-5 fill-amber-500 text-amber-500" />
+                    ))}
+                  </div>
+
+                  <Button 
+                    onClick={() => {
+                      const query = encodeURIComponent(bookingDetails?.hotel?.name || 'Hotel Stay');
+                      window.open(`https://www.google.com/search?q=${query}+reviews`, '_blank');
+                    }}
+                    className="w-full bg-amber-500 hover:bg-amber-600 text-white font-bold rounded-2xl text-xs h-11 transition-all shadow-md shadow-amber-150 hover:shadow-lg"
+                  >
+                    Write a Google Review
+                  </Button>
+                </CardContent>
+              </Card>
+            )}
 
             {/* Quick Actions Grid */}
             <div className="space-y-3">
