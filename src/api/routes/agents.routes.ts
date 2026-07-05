@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { users, bookings, hotels, roomTypes, agentRoomPrices, invoices } from '../../db/schema.js';
+import { users, bookings, hotels, roomTypes, agentRoomPrices, invoices, rooms, plans } from '../../db/schema.js';
 import { eq, and, sum, count } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 import bcrypt from 'bcryptjs';

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '../context/AuthContext';
@@ -18,14 +18,6 @@ export default function BookingsPage() {
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [assignRoomBooking, setAssignRoomBooking] = useState<any>(null);
   const [selectedRoomToAssign, setSelectedRoomToAssign] = useState<string>('');
-
-  const availableRoomsForBooking = useMemo(() => {
-    if (!assignRoomBooking || !rooms.length) return [];
-    return rooms.filter((r: any) => 
-      r.roomTypeId === assignRoomBooking.roomTypeId && 
-      r.status === 'available'
-    );
-  }, [assignRoomBooking, rooms]);
 
   // Agent availability sheet state
   const todayStr = new Date().toISOString().split('T')[0];
@@ -174,6 +166,14 @@ export default function BookingsPage() {
     },
     onError: (err: any) => alert(err.message)
   });
+
+  const availableRoomsForBooking = useMemo(() => {
+    if (!assignRoomBooking || !rooms.length) return [];
+    return rooms.filter((r: any) => 
+      r.roomTypeId === assignRoomBooking.roomTypeId && 
+      r.status === 'available'
+    );
+  }, [assignRoomBooking, rooms]);
 
   const loading = bookingsLoading || roomsLoading || plansLoading;
 
