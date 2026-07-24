@@ -15,7 +15,9 @@ import {
   restaurantInventory, 
   restaurantOrders, 
   guestChats, 
-  restaurantMenu 
+  restaurantMenu,
+  bookingExpenses,
+  agentRoomPrices
 } from '../../db/schema.js';
 import { eq, and, ne } from 'drizzle-orm';
 import { authenticateToken, AuthRequest } from '../middleware/auth.middleware.js';
@@ -277,6 +279,8 @@ router.delete('/hotels/:id', authenticateToken, requireSuperAdmin, async (req, r
     }
 
     // Cascade delete in correct order of dependency
+    await db.delete(bookingExpenses).where(eq(bookingExpenses.hotelId, id));
+    await db.delete(agentRoomPrices).where(eq(agentRoomPrices.hotelId, id));
     await db.delete(invoices).where(eq(invoices.hotelId, id));
     await db.delete(guestChats).where(eq(guestChats.hotelId, id));
     await db.delete(restaurantOrders).where(eq(restaurantOrders.hotelId, id));
