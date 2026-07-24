@@ -43,25 +43,11 @@ if (process.env.VERCEL !== '1') {
   }
 }
 
-// Multer config
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    try {
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-    } catch (err) {
-      console.error('Error creating uploadDir:', err);
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    const ext = file.originalname ? path.extname(file.originalname) : '.jpg';
-    cb(null, uniqueSuffix + ext);
-  }
+// Multer config (Use memoryStorage to support both local disk and serverless read-only environments)
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 } // 8MB max file size
 });
-const upload = multer({ storage });
 
 export async function createApp() {
   const app = express();
@@ -72,14 +58,8 @@ export async function createApp() {
   app.use('/uploads', express.static(uploadDir));
   app.use(checkSubscription);
 
-  // File Upload API
+  // File Upload API (Supports local disk + Vercel / serverless EROFS fallback)
   app.post('/api/upload', (req, res) => {
-    try {
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir, { recursive: true });
-      }
-    } catch (e) {}
-
     upload.any()(req, res, (err) => {
       if (err) {
         console.error('Upload error:', err);
@@ -91,8 +71,30 @@ export async function createApp() {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
-      const fileUrl = `/uploads/${file.filename}`;
-      res.json({ url: fileUrl });
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+      const ext = file.originalname ? path.extname(file.originalname) : '.jpg';
+      const filename = `${uniqueSuffix}${ext}`;
+
+      // 1. Attempt writing to local disk
+      try {
+        if (!fs.existsSync(uploadDir)) {
+          fs.mkdirSync(uploadDir, { recursive: true });
+        }
+        const filePath = path.join(uploadDir, filename);
+        fs.writeFileSync(filePath, file.buffer);
+
+        const fileUrl = `/uploads/${filename}`;
+        return res.json({ url: fileUrl });
+      } catch (diskErr: any) {
+        // 2. Read-Only File System Fallback (Vercel / AWS Lambda / Serverless)
+        console.warn('Read-only environment detected (Vercel/Serverless). Using Base64 Data URL fallback:', diskErr?.message);
+        
+        const mimeType = file.mimetype || 'image/jpeg';
+        const base64Data = file.buffer.toString('base64');
+        const dataUrl = `data:${mimeType};base64,${base64Data}`;
+
+        return res.json({ url: dataUrl });
+      }
     });
   });
 
