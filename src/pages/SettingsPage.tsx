@@ -50,6 +50,7 @@ export default function SettingsPage() {
     description: '',
     amenities: '' // Comma separated for input
   });
+  const [externalUrlInput, setExternalUrlInput] = useState('');
   
   const [isRoomDialogOpen, setIsRoomDialogOpen] = useState(false);
   const [roomData, setRoomData] = useState({ number: '', roomTypeId: '' });
@@ -460,6 +461,20 @@ export default function SettingsPage() {
     onError: (err: any) => alert(err.message)
   });
 
+  const addExternalUrl = () => {
+    const trimmed = externalUrlInput.trim();
+    if (!trimmed) return;
+    setRoomTypeData(prev => {
+      const newImages = Array.from(new Set([...prev.images, trimmed]));
+      return {
+        ...prev,
+        images: newImages,
+        imageUrl: prev.imageUrl || trimmed
+      };
+    });
+    setExternalUrlInput('');
+  };
+
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -474,18 +489,26 @@ export default function SettingsPage() {
         headers: { Authorization: `Bearer ${token}` },
         body: formData
       });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Upload failed');
+      }
       const data = await res.json();
       if (data.url) {
-        setRoomTypeData(prev => ({ 
-          ...prev, 
-          imageUrl: prev.imageUrl || data.url, 
-          images: [...prev.images, data.url] 
-        }));
+        setRoomTypeData(prev => {
+          const newImages = Array.from(new Set([...prev.images, data.url]));
+          return { 
+            ...prev, 
+            imageUrl: prev.imageUrl || data.url, 
+            images: newImages 
+          };
+        });
       }
-    } catch (error) {
-      alert('Upload failed');
+    } catch (error: any) {
+      alert(error.message || 'Upload failed');
     } finally {
       setIsUploading(false);
+      e.target.value = '';
     }
   };
 
@@ -740,15 +763,19 @@ export default function SettingsPage() {
                                 className="h-8 text-blue-500 hover:text-blue-600"
                                 onClick={() => {
                                   setEditingRoomTypeId(type.id);
+                                  const parsedImages = (() => { try { return type.images ? JSON.parse(type.images) : []; } catch { return []; } })();
+                                  const initialImageUrl = type.imageUrl || (parsedImages[0] || '');
+                                  const initialImages = Array.from(new Set([initialImageUrl, ...parsedImages].filter(Boolean)));
                                   setRoomTypeData({
                                     name: type.name,
                                     price: type.price.toString(),
                                     capacity: type.capacity.toString(),
-                                    imageUrl: type.imageUrl || '',
-                                    images: (() => { try { return type.images ? JSON.parse(type.images) : []; } catch { return []; } })(),
+                                    imageUrl: initialImageUrl,
+                                    images: initialImages,
                                     description: type.description || '',
                                     amenities: (() => { try { return type.amenities ? JSON.parse(type.amenities).join(', ') : ''; } catch { return ''; } })()
                                   });
+                                  setExternalUrlInput('');
                                   setIsRoomTypeDialogOpen(true);
                                 }}
                               >
@@ -1142,6 +1169,7 @@ export default function SettingsPage() {
         if (!open) {
           setEditingRoomTypeId(null);
           setRoomTypeData({ name: '', price: '', capacity: '', imageUrl: '', images: [], description: '', amenities: '' });
+          setExternalUrlInput('');
         }
       }}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
@@ -1151,7 +1179,21 @@ export default function SettingsPage() {
           </DialogHeader>
           <form onSubmit={(e) => { 
             e.preventDefault(); 
-            createRoomTypeMutation.mutate(roomTypeData); 
+            let finalImages = [...roomTypeData.images];
+            const pendingUrl = externalUrlInput.trim();
+            if (pendingUrl && !finalImages.includes(pendingUrl)) {
+              finalImages.push(pendingUrl);
+              setExternalUrlInput('');
+            }
+            const finalImageUrl = roomTypeData.imageUrl && finalImages.includes(roomTypeData.imageUrl) 
+              ? roomTypeData.imageUrl 
+              : (finalImages[0] || '');
+
+            createRoomTypeMutation.mutate({
+              ...roomTypeData,
+              images: finalImages,
+              imageUrl: finalImageUrl
+            }); 
           }} className="space-y-6 py-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
@@ -1210,36 +1252,68 @@ export default function SettingsPage() {
                 />
               </div>
               
-              <div className="grid grid-cols-4 gap-3">
-                {roomTypeData.images.map((img, idx) => (
-                  <div key={idx} className="relative aspect-square rounded-lg border overflow-hidden group">
-                    <img src={img} className="w-full h-full object-cover" />
-                    <button 
-                      type="button"
-                      onClick={() => setRoomTypeData(prev => ({ ...prev, images: prev.images.filter((_, i) => i !== idx) }))}
-                      className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <Trash2 size={12} />
-                    </button>
-                    {idx === 0 && <div className="absolute bottom-0 left-0 right-0 bg-blue-600 text-[8px] text-white text-center py-0.5 font-bold uppercase">Main</div>}
-                  </div>
-                ))}
-              </div>
+              {roomTypeData.images.length > 0 && (
+                <div className="grid grid-cols-4 gap-3 border rounded-xl p-3 bg-slate-50/50">
+                  {roomTypeData.images.map((img, idx) => {
+                    const isMain = (roomTypeData.imageUrl === img) || (!roomTypeData.imageUrl && idx === 0);
+                    return (
+                      <div key={idx} className="relative aspect-square rounded-lg border overflow-hidden group shadow-sm bg-white">
+                        <img src={img} className="w-full h-full object-cover" alt={`Room ${idx + 1}`} />
+                        <button 
+                          type="button"
+                          onClick={() => {
+                            const newImages = roomTypeData.images.filter((_, i) => i !== idx);
+                            const newMain = isMain ? (newImages[0] || '') : roomTypeData.imageUrl;
+                            setRoomTypeData(prev => ({
+                              ...prev,
+                              images: newImages,
+                              imageUrl: newMain
+                            }));
+                          }}
+                          className="absolute top-1 right-1 bg-rose-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity shadow"
+                          title="Remove Image"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setRoomTypeData(prev => ({ ...prev, imageUrl: img }))}
+                          className={`absolute bottom-1 left-1 px-1.5 py-0.5 text-[9px] rounded font-bold uppercase transition-all shadow ${
+                            isMain
+                              ? 'bg-emerald-600 text-white'
+                              : 'bg-slate-900/80 text-white hover:bg-emerald-600 opacity-0 group-hover:opacity-100'
+                          }`}
+                        >
+                          {isMain ? 'Main Image' : 'Set Main'}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
               <div className="flex gap-2">
                  <Input 
-                   placeholder="Or paste external image URL" 
-                   className="flex-1"
+                   placeholder="Or paste external image URL (e.g. https://images.unsplash.com/...)" 
+                   value={externalUrlInput}
+                   onChange={(e) => setExternalUrlInput(e.target.value)}
+                   className="flex-1 text-sm"
                    onKeyDown={(e) => {
                      if (e.key === 'Enter') {
                        e.preventDefault();
-                       const val = (e.target as HTMLInputElement).value;
-                       if (val) {
-                         setRoomTypeData(prev => ({ ...prev, images: [...prev.images, val], imageUrl: prev.imageUrl || val }));
-                         (e.target as HTMLInputElement).value = '';
-                       }
+                       addExternalUrl();
                      }
                    }}
                  />
+                 <Button 
+                   type="button" 
+                   variant="secondary" 
+                   size="sm"
+                   onClick={addExternalUrl}
+                   disabled={!externalUrlInput.trim()}
+                 >
+                   Add URL
+                 </Button>
               </div>
             </div>
 
