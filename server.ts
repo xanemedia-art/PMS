@@ -46,11 +46,19 @@ if (process.env.VERCEL !== '1') {
 // Multer config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
+    try {
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+    } catch (err) {
+      console.error('Error creating uploadDir:', err);
+    }
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, uniqueSuffix + path.extname(file.originalname));
+    const ext = file.originalname ? path.extname(file.originalname) : '.jpg';
+    cb(null, uniqueSuffix + ext);
   }
 });
 const upload = multer({ storage });
@@ -65,12 +73,27 @@ export async function createApp() {
   app.use(checkSubscription);
 
   // File Upload API
-  app.post('/api/upload', upload.single('file'), (req, res) => {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-    const fileUrl = `/uploads/${req.file.filename}`;
-    res.json({ url: fileUrl });
+  app.post('/api/upload', (req, res) => {
+    try {
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+    } catch (e) {}
+
+    upload.any()(req, res, (err) => {
+      if (err) {
+        console.error('Upload error:', err);
+        return res.status(400).json({ error: err.message || 'File upload failed' });
+      }
+
+      const file = req.file || (req.files && (req.files as Express.Multer.File[])[0]);
+      if (!file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+      }
+
+      const fileUrl = `/uploads/${file.filename}`;
+      res.json({ url: fileUrl });
+    });
   });
 
   // API Routes

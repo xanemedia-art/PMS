@@ -24,6 +24,7 @@ export const checkSubscription = async (req: AuthRequest, res: Response, next: N
       path.startsWith('/api/subscription') ||
       path.startsWith('/api/super-admin') ||
       path.startsWith('/api/public') ||
+      path === '/api/upload' ||
       path === '/api/settings/hotel' ||
       path.startsWith('/api/settings/hotels');
 
