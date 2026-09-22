@@ -6,7 +6,7 @@
   "scripts": {
     "predev": "tsx seed.ts",
     "prestart": "tsx seed.ts",
-    "dev": "tsx watch server.ts",
+    "dev": "tsx server.ts",
     "build": "vite build",
     "start": "tsx server.ts",
     "seed": "tsx seed.ts",
