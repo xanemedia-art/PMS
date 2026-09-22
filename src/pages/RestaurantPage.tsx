@@ -9,10 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { 
   Coffee, Plus, Minus, AlertTriangle, ChefHat, CheckCircle2, ClipboardList, 
   Edit, Trash2, Layers, ToggleLeft, ToggleRight, Settings2, UploadCloud, 
-  Download, FileSpreadsheet, FileUp, X, Check, FolderPlus
+  Download, FileSpreadsheet, FileUp, X, Check, FolderPlus,
+  QrCode, Printer, Sparkles, UtensilsCrossed, Users, Receipt, Search, DollarSign, ArrowRight
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getQrCodePngUrl, downloadQrCode, printStandeeCard } from '../utils/qrCode';
 
 export default function RestaurantPage() {
   const { token, user } = useAuth();
@@ -72,6 +74,26 @@ export default function RestaurantPage() {
   // KOT Edit states
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const [editingItems, setEditingItems] = useState<any[]>([]);
+
+  // Table Management & Custom Billing states
+  const [selectedTableForQr, setSelectedTableForQr] = useState<any>(null);
+  const [selectedTableForBilling, setSelectedTableForBilling] = useState<any>(null);
+  const [isAddTableOpen, setIsAddTableOpen] = useState(false);
+  const [newTableNumber, setNewTableNumber] = useState('');
+  const [newTableCapacity, setNewTableCapacity] = useState('4');
+  const [newTableSection, setNewTableSection] = useState('Main Dining');
+  
+  // Custom Bill Editor states for selected table
+  const [billItems, setBillItems] = useState<any[]>([]);
+  const [billDiscountPercent, setBillDiscountPercent] = useState<string>('0');
+  const [billNotes, setBillNotes] = useState<string>('');
+  const [settlePaymentMethod, setSettlePaymentMethod] = useState<'cash' | 'card' | 'upi' | 'charge_to_room'>('cash');
+  const [chargeRoomNumber, setChargeRoomNumber] = useState<string>('');
+  const [chargeGuestPin, setChargeGuestPin] = useState<string>('');
+  const [offMenuName, setOffMenuName] = useState<string>('');
+  const [offMenuPrice, setOffMenuPrice] = useState<string>('');
+  const [offMenuQty, setOffMenuQty] = useState<string>('1');
+  const [offMenuNotes, setOffMenuNotes] = useState<string>('');
 
   // Queries
   // 1. Fetch Orders / KOTs
@@ -135,6 +157,115 @@ export default function RestaurantPage() {
   const menuCategories = useMemo<string[]>(() => {
     return ['All', ...categoryNames];
   }, [categoryNames]);
+
+  // 5. Fetch Dining Tables
+  const { data: tables = [], isLoading: tablesLoading } = useQuery({
+    queryKey: ['restaurantTables'],
+    queryFn: async () => {
+      const res = await fetch('/api/restaurant/tables', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch tables');
+      return res.json();
+    },
+    refetchInterval: 6000
+  });
+
+  // 6. Fetch Hotel Settings (for slug & GST rate)
+  const { data: hotelData } = useQuery({
+    queryKey: ['hotelSettings'],
+    queryFn: async () => {
+      const res = await fetch('/api/settings/hotel', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) return null;
+      return res.json();
+    }
+  });
+
+  // Table Mutations
+  const addTableMutation = useMutation({
+    mutationFn: async (payload: { tableNumber: string; capacity: number; section: string }) => {
+      const res = await fetch('/api/restaurant/tables', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to add table');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantTables'] });
+      setIsAddTableOpen(false);
+      setNewTableNumber('');
+      setNewTableCapacity('4');
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const deleteTableMutation = useMutation({
+    mutationFn: async (tableId: number) => {
+      const res = await fetch(`/api/restaurant/tables/${tableId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to delete table');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantTables'] });
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const updateTableOrderMutation = useMutation({
+    mutationFn: async ({ id, items, totalAmount, status, notes }: any) => {
+      const res = await fetch(`/api/restaurant/tables/${id}/order`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ items, totalAmount, status, notes })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to update table order');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantTables'] });
+      queryClient.invalidateQueries({ queryKey: ['restaurantOrders'] });
+      alert('Table bill and order items updated successfully!');
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const settleTableMutation = useMutation({
+    mutationFn: async ({ id, paymentMethod, roomNumber, guestPin }: any) => {
+      const res = await fetch(`/api/restaurant/tables/${id}/settle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ paymentMethod, roomNumber, guestPin })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to settle table');
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantTables'] });
+      queryClient.invalidateQueries({ queryKey: ['restaurantOrders'] });
+      setSelectedTableForBilling(null);
+      alert(data.message || 'Table settled successfully!');
+    },
+    onError: (err: any) => alert(err.message)
+  });
 
   // Mutations
   // Update order status
@@ -630,6 +761,134 @@ export default function RestaurantPage() {
     return menuItems.filter((item: any) => item.category === selectedCategoryFilter);
   }, [menuItems, selectedCategoryFilter]);
 
+  // Table Billing Handlers
+  const openTableBillingDialog = (table: any) => {
+    setSelectedTableForBilling(table);
+    try {
+      const parsed = table.currentOrderJson ? JSON.parse(table.currentOrderJson) : [];
+      setBillItems(Array.isArray(parsed) ? parsed : []);
+    } catch {
+      setBillItems([]);
+    }
+    setBillDiscountPercent('0');
+    setBillNotes(table.notes || '');
+    setSettlePaymentMethod('cash');
+    setChargeRoomNumber('');
+    setChargeGuestPin('');
+    setOffMenuName('');
+    setOffMenuPrice('');
+    setOffMenuQty('1');
+    setOffMenuNotes('');
+  };
+
+  const addCatalogItemToBill = (item: any) => {
+    setBillItems((prev) => {
+      const existingIndex = prev.findIndex(i => i.name.toLowerCase() === item.name.toLowerCase());
+      if (existingIndex > -1) {
+        const next = [...prev];
+        next[existingIndex] = {
+          ...next[existingIndex],
+          quantity: (parseInt(next[existingIndex].quantity) || 1) + 1
+        };
+        return next;
+      }
+      return [...prev, {
+        name: item.name,
+        price: parseFloat(item.price) || 0,
+        quantity: 1,
+        notes: ''
+      }];
+    });
+  };
+
+  const addOffMenuItemToBill = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!offMenuName.trim() || !offMenuPrice) return;
+    setBillItems((prev) => [
+      ...prev,
+      {
+        name: offMenuName.trim(),
+        price: parseFloat(offMenuPrice) || 0,
+        quantity: parseInt(offMenuQty) || 1,
+        notes: offMenuNotes.trim()
+      }
+    ]);
+    setOffMenuName('');
+    setOffMenuPrice('');
+    setOffMenuQty('1');
+    setOffMenuNotes('');
+  };
+
+  const updateBillItemQty = (index: number, newQty: number) => {
+    if (newQty <= 0) {
+      removeBillItem(index);
+      return;
+    }
+    setBillItems((prev) => {
+      const next = [...prev];
+      next[index] = { ...next[index], quantity: newQty };
+      return next;
+    });
+  };
+
+  const removeBillItem = (index: number) => {
+    setBillItems((prev) => prev.filter((_, idx) => idx !== index));
+  };
+
+  const billSubtotal = useMemo(() => {
+    return billItems.reduce((acc, item) => acc + ((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)), 0);
+  }, [billItems]);
+
+  const billDiscountAmount = useMemo(() => {
+    const pct = parseFloat(billDiscountPercent) || 0;
+    return (billSubtotal * pct) / 100;
+  }, [billSubtotal, billDiscountPercent]);
+
+  const billTaxAmount = useMemo(() => {
+    const rate = hotelData?.foodGstRate ? parseFloat(hotelData.foodGstRate) : 5.0;
+    const taxable = Math.max(0, billSubtotal - billDiscountAmount);
+    return (taxable * rate) / 100;
+  }, [billSubtotal, billDiscountAmount, hotelData?.foodGstRate]);
+
+  const billGrandTotal = useMemo(() => {
+    return Math.max(0, Math.round((billSubtotal - billDiscountAmount + billTaxAmount) * 100) / 100);
+  }, [billSubtotal, billDiscountAmount, billTaxAmount]);
+
+  const handleSaveLiveBill = () => {
+    if (!selectedTableForBilling) return;
+    updateTableOrderMutation.mutate({
+      id: selectedTableForBilling.id,
+      items: billItems,
+      totalAmount: billGrandTotal,
+      notes: billNotes
+    });
+  };
+
+  const handleSettleBill = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedTableForBilling) return;
+    if (settlePaymentMethod === 'charge_to_room' && !chargeRoomNumber.trim()) {
+      alert('Please enter a room number to charge the bill.');
+      return;
+    }
+    settleTableMutation.mutate({
+      id: selectedTableForBilling.id,
+      paymentMethod: settlePaymentMethod,
+      roomNumber: chargeRoomNumber.trim(),
+      guestPin: chargeGuestPin.trim()
+    });
+  };
+
+  const handleAddTableSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTableNumber.trim()) return;
+    addTableMutation.mutate({
+      tableNumber: newTableNumber.trim().toUpperCase(),
+      capacity: parseInt(newTableCapacity) || 4,
+      section: newTableSection.trim() || 'Main Dining'
+    });
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex justify-between items-center">
@@ -643,6 +902,9 @@ export default function RestaurantPage() {
         <TabsList className="mb-4">
           <TabsTrigger value="kot" className="flex items-center gap-2">
             <ChefHat className="w-4 h-4" /> Active Kitchen Tickets (KOTs)
+          </TabsTrigger>
+          <TabsTrigger value="tables" className="flex items-center gap-2">
+            <UtensilsCrossed className="w-4 h-4" /> Tables & Live Billing
           </TabsTrigger>
           <TabsTrigger value="inventory" className="flex items-center gap-2">
             <ClipboardList className="w-4 h-4" /> Kitchen Storage & Inventory
@@ -869,6 +1131,665 @@ export default function RestaurantPage() {
                   {updateOrderMutation.isPending ? 'Saving...' : 'Save Changes'}
                 </Button>
               </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </TabsContent>
+
+        {/* ── TABLES & LIVE BILLING TAB ── */}
+        <TabsContent value="tables" className="space-y-6 animate-in fade-in duration-300">
+          
+          {/* Top Control Bar */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-5 rounded-2xl border shadow-sm">
+            <div>
+              <h3 className="font-extrabold text-base text-slate-900 flex items-center gap-2">
+                <UtensilsCrossed className="w-5 h-5 text-amber-600" />
+                Restaurant Dining Tables & Live Billing Desk
+                <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100 border-none font-bold text-xs">
+                  {tables.length} Tables
+                </Badge>
+              </h3>
+              <p className="text-xs text-slate-500 mt-1">
+                Real-time table status, off-menu special orders, on-the-fly bill editing, printable QR standees, and direct settlement or authenticated Room Charge.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              <Button 
+                onClick={() => setIsAddTableOpen(true)}
+                className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs rounded-xl shadow-sm"
+              >
+                <Plus className="w-3.5 h-3.5 mr-1.5" />
+                Add New Table
+              </Button>
+            </div>
+          </div>
+
+          {/* KPI Summary Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <Card className="border border-slate-200 shadow-sm bg-white">
+              <CardContent className="p-4">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Total Tables</span>
+                <p className="text-2xl font-extrabold text-slate-800 mt-1">{tables.length}</p>
+                <p className="text-[10px] text-slate-500 mt-0.5 font-medium">Configured in dining area</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-amber-200 shadow-sm bg-amber-50/40">
+              <CardContent className="p-4">
+                <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider">Occupied / Live</span>
+                <p className="text-2xl font-extrabold text-amber-800 mt-1">
+                  {tables.filter((t: any) => t.status === 'occupied').length}
+                </p>
+                <p className="text-[10px] text-amber-700 mt-0.5 font-medium">Active dining sessions</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-emerald-200 shadow-sm bg-emerald-50/40">
+              <CardContent className="p-4">
+                <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider">Available / Clean</span>
+                <p className="text-2xl font-extrabold text-emerald-800 mt-1">
+                  {tables.filter((t: any) => t.status === 'vacant').length}
+                </p>
+                <p className="text-[10px] text-emerald-700 mt-0.5 font-medium">Ready for guests</p>
+              </CardContent>
+            </Card>
+
+            <Card className="border border-blue-200 shadow-sm bg-blue-50/40">
+              <CardContent className="p-4">
+                <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider">Live Bills Active</span>
+                <p className="text-2xl font-extrabold text-blue-900 mt-1">
+                  ₹{tables.reduce((acc: number, t: any) => acc + (parseFloat(t.currentBillAmount) || 0), 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </p>
+                <p className="text-[10px] text-blue-700 mt-0.5 font-medium">Unsettled table tabs</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Tables Grid */}
+          {tablesLoading ? (
+            <div className="p-12 text-center text-slate-400 italic text-sm animate-pulse">Loading dining tables...</div>
+          ) : tables.length === 0 ? (
+            <div className="p-12 text-center bg-white rounded-2xl border text-slate-500">
+              <UtensilsCrossed className="w-10 h-10 mx-auto text-slate-300 mb-2" />
+              <p className="font-bold text-sm text-slate-700">No tables configured yet.</p>
+              <p className="text-xs text-slate-400 mt-1">Click "Add New Table" to create your first restaurant dining table.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              {tables.map((table: any) => {
+                let parsedItems: any[] = [];
+                try {
+                  if (table.currentOrderJson) {
+                    parsedItems = JSON.parse(table.currentOrderJson);
+                  }
+                } catch {
+                  parsedItems = [];
+                }
+
+                const isOccupied = table.status === 'occupied';
+                const billAmt = parseFloat(table.currentBillAmount) || 0;
+
+                return (
+                  <Card 
+                    key={table.id} 
+                    className={`border transition-all duration-200 hover:shadow-md flex flex-col justify-between ${
+                      isOccupied 
+                        ? 'border-amber-300 bg-amber-50/20 shadow-sm' 
+                        : 'border-slate-200 bg-white hover:border-slate-300'
+                    }`}
+                  >
+                    <CardHeader className="pb-3 border-b bg-slate-50/80 rounded-t-xl">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg font-black text-slate-900 tracking-tight">
+                              Table {table.tableNumber}
+                            </span>
+                            <Badge variant="outline" className="text-[10px] font-bold bg-white text-slate-600 border-slate-200">
+                              {table.section || 'Main Dining'}
+                            </Badge>
+                          </div>
+                          <span className="text-xs text-slate-500 flex items-center gap-1 mt-1 font-medium">
+                            <Users className="w-3.5 h-3.5 text-slate-400" />
+                            {table.capacity || 4} Guests Capacity
+                          </span>
+                        </div>
+
+                        <Badge className={`font-bold text-[10px] border-none uppercase ${
+                          table.status === 'occupied' 
+                            ? 'bg-amber-100 text-amber-800' 
+                            : table.status === 'reserved'
+                            ? 'bg-purple-100 text-purple-800'
+                            : 'bg-emerald-100 text-emerald-800'
+                        }`}>
+                          {table.status === 'occupied' ? 'Occupied • Live Bill' : table.status === 'reserved' ? 'Reserved' : 'Available'}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+
+                    <CardContent className="py-4 space-y-3 flex-1">
+                      {/* Current Bill Amount */}
+                      <div className="p-3 bg-slate-50 border border-slate-150 rounded-xl flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Current Tab</span>
+                          <p className="text-lg font-mono font-extrabold text-slate-900">
+                            ₹{billAmt.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </p>
+                        </div>
+                        <Badge variant="outline" className="text-xs font-semibold bg-white border-slate-200 text-slate-700">
+                          {parsedItems.length} {parsedItems.length === 1 ? 'item' : 'items'}
+                        </Badge>
+                      </div>
+
+                      {/* Item Preview */}
+                      {parsedItems.length > 0 ? (
+                        <div className="space-y-1">
+                          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Active Items:</p>
+                          <div className="max-h-24 overflow-y-auto space-y-1 pr-1 text-xs text-slate-700 divide-y divide-slate-100">
+                            {parsedItems.map((item: any, idx: number) => (
+                              <div key={idx} className="flex justify-between items-center py-1 text-xs">
+                                <span className="truncate max-w-[180px] font-medium">
+                                  {item.quantity}x {item.name}
+                                  {item.notes && <span className="text-[10px] text-amber-600 block italic">"{item.notes}"</span>}
+                                </span>
+                                <span className="font-mono text-slate-600 font-semibold">
+                                  ₹{(parseFloat(item.price) * (item.quantity || 1)).toFixed(2)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic py-2 text-center">
+                          Table is clear. No active orders.
+                        </p>
+                      )}
+
+                      {table.notes && (
+                        <div className="p-2 bg-amber-50 rounded-lg border border-amber-200 text-[11px] text-amber-800">
+                          <strong>Note:</strong> {table.notes}
+                        </div>
+                      )}
+                    </CardContent>
+
+                    <div className="p-3.5 border-t bg-slate-50/50 rounded-b-xl flex items-center gap-2">
+                      <Button
+                        size="sm"
+                        className="flex-1 bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-9 rounded-xl shadow-sm flex items-center justify-center gap-1.5"
+                        onClick={() => openTableBillingDialog(table)}
+                      >
+                        <Receipt className="w-3.5 h-3.5" />
+                        Custom Bill & Orders
+                      </Button>
+
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="border-slate-200 hover:bg-white text-slate-700 font-bold text-xs h-9 rounded-xl flex items-center justify-center gap-1 px-3"
+                        onClick={() => setSelectedTableForQr(table)}
+                        title="View Table QR Code"
+                      >
+                        <QrCode className="w-3.5 h-3.5 text-slate-500" />
+                        QR
+                      </Button>
+
+                      {(user?.role === 'admin' || user?.role === 'manager') && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-9 w-9 p-0 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl"
+                          onClick={() => {
+                            if (confirm(`Are you sure you want to delete Table ${table.tableNumber}?`)) {
+                              deleteTableMutation.mutate(table.id);
+                            }
+                          }}
+                          disabled={deleteTableMutation.isPending}
+                          title="Delete Table"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── ADD NEW TABLE DIALOG ── */}
+          <Dialog open={isAddTableOpen} onOpenChange={setIsAddTableOpen}>
+            <DialogContent className="sm:max-w-[420px]">
+              <DialogHeader>
+                <DialogTitle>Add Restaurant Dining Table</DialogTitle>
+                <DialogDescription>
+                  Configure a dining table identifier, seating capacity, and floor section.
+                </DialogDescription>
+              </DialogHeader>
+
+              <form onSubmit={handleAddTableSubmit} className="space-y-4 py-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="tableNum">Table Identifier / Code *</Label>
+                  <Input 
+                    id="tableNum" 
+                    placeholder="e.g. T-07, ROOFTOP-02, POOL-1" 
+                    value={newTableNumber} 
+                    onChange={(e) => setNewTableNumber(e.target.value)} 
+                    required 
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="tableCap">Seating Capacity</Label>
+                    <Input 
+                      id="tableCap" 
+                      type="number" 
+                      min="1" 
+                      max="30" 
+                      value={newTableCapacity} 
+                      onChange={(e) => setNewTableCapacity(e.target.value)} 
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="tableSec">Floor Section</Label>
+                    <select
+                      id="tableSec"
+                      value={newTableSection}
+                      onChange={(e) => setNewTableSection(e.target.value)}
+                      className="w-full h-10 px-3 border rounded-md text-sm bg-white"
+                    >
+                      <option value="Main Dining">Main Dining</option>
+                      <option value="AC Hall">AC Hall</option>
+                      <option value="Rooftop">Rooftop Garden</option>
+                      <option value="Poolside">Poolside Deck</option>
+                      <option value="VIP Lounge">VIP Lounge</option>
+                      <option value="Outdoor Terrace">Outdoor Terrace</option>
+                    </select>
+                  </div>
+                </div>
+
+                <DialogFooter className="pt-3">
+                  <Button 
+                    type="submit" 
+                    disabled={addTableMutation.isPending}
+                    className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold"
+                  >
+                    {addTableMutation.isPending ? 'Creating...' : 'Create Dining Table'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
+          {/* ── TABLE QR & STANDEE MODAL ── */}
+          <Dialog open={!!selectedTableForQr} onOpenChange={(open) => !open && setSelectedTableForQr(null)}>
+            <DialogContent className="sm:max-w-[460px] text-center">
+              <DialogHeader>
+                <DialogTitle className="flex items-center justify-center gap-2">
+                  <QrCode className="w-5 h-5 text-amber-600" />
+                  Table {selectedTableForQr?.tableNumber} Digital QR
+                </DialogTitle>
+                <DialogDescription>
+                  Guests can scan this QR code directly at Table {selectedTableForQr?.tableNumber} to view the digital menu, place dine-in orders, and settle their tab.
+                </DialogDescription>
+              </DialogHeader>
+
+              {selectedTableForQr && (
+                <div className="space-y-5 py-3">
+                  {(() => {
+                    const tableUrl = `${window.location.origin}/h/${hotelData?.slug || 'fyra'}/table/${selectedTableForQr.tableNumber}`;
+                    const qrPng = getQrCodePngUrl(tableUrl, 320);
+
+                    return (
+                      <>
+                        <div className="p-4 bg-slate-50 border rounded-2xl inline-block mx-auto shadow-inner">
+                          <img 
+                            src={qrPng} 
+                            alt={`Table ${selectedTableForQr.tableNumber} QR`} 
+                            className="w-48 h-48 mx-auto rounded-xl border border-white shadow-sm bg-white p-2"
+                          />
+                        </div>
+
+                        <div className="p-3 bg-amber-50/60 rounded-xl border border-amber-200 text-xs text-amber-900 font-mono break-all text-center">
+                          {tableUrl}
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 pt-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="border-slate-300 font-bold text-xs h-10 flex items-center justify-center gap-2"
+                            onClick={() => downloadQrCode(tableUrl, `Table-${selectedTableForQr.tableNumber}-QR.png`)}
+                          >
+                            <Download className="w-4 h-4 text-slate-600" />
+                            Download PNG
+                          </Button>
+
+                          <Button
+                            type="button"
+                            className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 flex items-center justify-center gap-2 shadow-sm"
+                            onClick={() => printStandeeCard(
+                              `Table ${selectedTableForQr.tableNumber}`,
+                              'Scan to browse menu, order directly & pay at table or charge to room',
+                              tableUrl,
+                              `${hotelData?.name || 'Fyra Hotel'} • Table Dining Service`
+                            )}
+                          >
+                            <Printer className="w-4 h-4" />
+                            Print Standee
+                          </Button>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
+            </DialogContent>
+          </Dialog>
+
+          {/* ── CUSTOM BILL & ORDER MANAGEMENT MODAL ── */}
+          <Dialog open={!!selectedTableForBilling} onOpenChange={(open) => !open && setSelectedTableForBilling(null)}>
+            <DialogContent className="sm:max-w-[700px] max-h-[92vh] overflow-y-auto">
+              <DialogHeader>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Receipt className="w-5 h-5 text-amber-600" />
+                    <DialogTitle className="text-xl">
+                      Table {selectedTableForBilling?.tableNumber} - Live Bill & Order Desk
+                    </DialogTitle>
+                  </div>
+                  <Badge variant="outline" className="font-bold text-xs bg-slate-50">
+                    {selectedTableForBilling?.section || 'Main Dining'}
+                  </Badge>
+                </div>
+                <DialogDescription>
+                  Review and edit active items, add custom off-menu dishes, apply discounts, and complete table settlement.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-6 py-3">
+                {/* Active Items Table */}
+                <div className="space-y-2">
+                  <div className="flex justify-between items-center">
+                    <Label className="font-bold text-sm text-slate-800">Bill Items & Quantities</Label>
+                    <span className="text-xs text-slate-500 font-medium">
+                      {billItems.length} item line{billItems.length === 1 ? '' : 's'}
+                    </span>
+                  </div>
+
+                  {billItems.length === 0 ? (
+                    <div className="p-6 text-center bg-slate-50 rounded-xl border border-dashed text-slate-400 text-xs italic">
+                      No items currently on this bill. Add items from the catalog or add a custom special order below.
+                    </div>
+                  ) : (
+                    <div className="border rounded-xl overflow-hidden divide-y divide-slate-100 text-xs bg-white">
+                      {billItems.map((item, idx) => (
+                        <div key={idx} className="p-3 flex items-center justify-between gap-3 hover:bg-slate-50/50">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-slate-900 truncate">{item.name}</p>
+                            <p className="text-slate-500 font-mono text-[11px]">
+                              ₹{parseFloat(item.price).toFixed(2)} each
+                              {item.notes && <span className="text-amber-600 ml-2 italic">"{item.notes}"</span>}
+                            </p>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <div className="flex items-center border rounded-lg overflow-hidden bg-white shadow-xs">
+                              <button
+                                type="button"
+                                onClick={() => updateBillItemQty(idx, (parseInt(item.quantity) || 1) - 1)}
+                                className="px-2 py-1 text-slate-500 hover:bg-slate-100 font-bold"
+                              >
+                                -
+                              </button>
+                              <span className="px-2 py-1 font-mono font-bold min-w-[28px] text-center text-xs">
+                                {item.quantity || 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => updateBillItemQty(idx, (parseInt(item.quantity) || 1) + 1)}
+                                className="px-2 py-1 text-slate-500 hover:bg-slate-100 font-bold"
+                              >
+                                +
+                              </button>
+                            </div>
+
+                            <span className="font-mono font-bold text-slate-800 min-w-[70px] text-right">
+                              ₹{((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)).toFixed(2)}
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => removeBillItem(idx)}
+                              className="text-slate-400 hover:text-red-600 p-1 rounded"
+                              title="Remove item"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Quick Add from Menu Catalog */}
+                <div className="p-3 bg-slate-50 border rounded-xl space-y-2">
+                  <Label className="text-xs font-bold text-slate-700">Quick Add From Menu Catalog</Label>
+                  <div className="flex gap-2">
+                    <select
+                      className="flex-1 h-9 px-3 border rounded-lg text-xs bg-white"
+                      defaultValue=""
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (!val) return;
+                        const item = menuItems.find((m: any) => m.id === parseInt(val));
+                        if (item) addCatalogItemToBill(item);
+                        e.target.value = '';
+                      }}
+                    >
+                      <option value="" disabled>-- Select a dish/drink to add --</option>
+                      {menuItems.map((m: any) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name} ({m.category}) - ₹{m.price}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Special Off-Menu Custom Order Section */}
+                <div className="p-4 bg-amber-50/50 border border-amber-200 rounded-xl space-y-3">
+                  <div className="flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-amber-600" />
+                    <Label className="text-xs font-bold text-amber-900">Add Custom Off-Menu Special Item</Label>
+                  </div>
+                  <p className="text-[11px] text-amber-700 leading-snug">
+                    Use this for custom cooking requests, off-menu dishes, chef specials, or modified portion pricing.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="sm:col-span-2">
+                      <Input
+                        placeholder="Item Name (e.g. Special Garlic Roti / Half Handi)"
+                        value={offMenuName}
+                        onChange={(e) => setOffMenuName(e.target.value)}
+                        className="h-8 text-xs bg-white"
+                      />
+                    </div>
+                    <div>
+                      <Input
+                        type="number"
+                        placeholder="Price (₹)"
+                        value={offMenuPrice}
+                        onChange={(e) => setOffMenuPrice(e.target.value)}
+                        className="h-8 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div>
+                      <Input
+                        type="number"
+                        min="1"
+                        placeholder="Qty (1)"
+                        value={offMenuQty}
+                        onChange={(e) => setOffMenuQty(e.target.value)}
+                        className="h-8 text-xs bg-white"
+                      />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <Input
+                        placeholder="Special instructions (e.g. Less spicy, crispy)"
+                        value={offMenuNotes}
+                        onChange={(e) => setOffMenuNotes(e.target.value)}
+                        className="h-8 text-xs bg-white"
+                      />
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={addOffMenuItemToBill}
+                    className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-8 rounded-lg"
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Special Item to Bill
+                  </Button>
+                </div>
+
+                {/* Bill Calculation Summary */}
+                <div className="p-4 bg-slate-900 text-white rounded-2xl space-y-3">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400">Subtotal:</span>
+                    <span className="font-mono font-bold">₹{billSubtotal.toFixed(2)}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-400">Discount (%):</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={billDiscountPercent}
+                        onChange={(e) => setBillDiscountPercent(e.target.value)}
+                        className="w-16 h-7 px-2 bg-slate-800 border border-slate-700 rounded text-center font-mono text-white text-xs"
+                      />
+                    </div>
+                    <span className="font-mono font-bold text-amber-400">- ₹{billDiscountAmount.toFixed(2)}</span>
+                  </div>
+
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-slate-400">Food GST ({hotelData?.foodGstRate || 5}%):</span>
+                    <span className="font-mono font-bold">₹{billTaxAmount.toFixed(2)}</span>
+                  </div>
+
+                  <div className="border-t border-slate-800 pt-3 flex justify-between items-center">
+                    <span className="text-sm font-extrabold uppercase tracking-wide text-[#C5A880]">Grand Total:</span>
+                    <span className="text-2xl font-black font-mono text-white">
+                      ₹{billGrandTotal.toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Table Notes */}
+                <div className="space-y-1.5">
+                  <Label htmlFor="tblNotes" className="text-xs font-bold text-slate-700">Table / Kitchen Notes</Label>
+                  <Input
+                    id="tblNotes"
+                    placeholder="e.g. VIP guest, requested quick service, billing split"
+                    value={billNotes}
+                    onChange={(e) => setBillNotes(e.target.value)}
+                    className="text-xs"
+                  />
+                </div>
+
+                {/* Action Buttons: Save Live Bill vs Settle Table */}
+                <div className="flex flex-col gap-3 pt-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={handleSaveLiveBill}
+                    disabled={updateTableOrderMutation.isPending}
+                    className="w-full border-slate-300 hover:bg-slate-100 text-slate-800 font-bold h-10"
+                  >
+                    {updateTableOrderMutation.isPending ? 'Saving...' : 'Save & Update Live Bill (Keep Table Open)'}
+                  </Button>
+
+                  {/* Settlement Card */}
+                  <div className="p-4 bg-emerald-50/50 border border-emerald-200 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs font-black text-emerald-950 uppercase tracking-wider">
+                        Settle & Clear Table
+                      </Label>
+                      <Badge className="bg-emerald-600 text-white font-bold text-[10px]">
+                        Grand Total: ₹{billGrandTotal.toFixed(2)}
+                      </Badge>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-[11px] font-bold text-emerald-900">Select Settlement Method:</Label>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        {[
+                          { id: 'cash', label: 'Cash' },
+                          { id: 'card', label: 'Card / POS' },
+                          { id: 'upi', label: 'UPI / QR' },
+                          { id: 'charge_to_room', label: 'Charge to Room' },
+                        ].map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => setSettlePaymentMethod(m.id as any)}
+                            className={`p-2 rounded-xl text-xs font-bold border transition text-center ${
+                              settlePaymentMethod === m.id
+                                ? 'bg-emerald-700 text-white border-emerald-800 shadow-xs'
+                                : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {settlePaymentMethod === 'charge_to_room' && (
+                      <div className="p-3 bg-white border border-emerald-300 rounded-xl space-y-2 animate-in fade-in">
+                        <p className="text-[11px] text-emerald-900 font-medium">
+                          Authenticate room resident to post <strong>₹{billGrandTotal.toFixed(2)}</strong> directly to their checked-in booking folio.
+                        </p>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Input
+                            placeholder="Room Number (e.g. 101)"
+                            value={chargeRoomNumber}
+                            onChange={(e) => setChargeRoomNumber(e.target.value)}
+                            className="h-8 text-xs"
+                            required
+                          />
+                          <Input
+                            type="password"
+                            placeholder="Guest PIN (optional)"
+                            value={chargeGuestPin}
+                            onChange={(e) => setChargeGuestPin(e.target.value)}
+                            className="h-8 text-xs font-mono"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <Button
+                      type="button"
+                      onClick={handleSettleBill}
+                      disabled={settleTableMutation.isPending || billGrandTotal <= 0}
+                      className="w-full bg-emerald-700 hover:bg-emerald-800 text-white font-extrabold text-xs h-10 rounded-xl shadow-md"
+                    >
+                      {settleTableMutation.isPending ? 'Settling...' : `Confirm Settlement (₹${billGrandTotal.toFixed(2)})`}
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </DialogContent>
           </Dialog>
         </TabsContent>

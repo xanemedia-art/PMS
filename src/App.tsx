@@ -37,6 +37,8 @@ import GuestRequestsPage from './pages/GuestRequestsPage';
 import RestaurantPage from './pages/RestaurantPage';
 import PresentationPage from './pages/PresentationPage';
 import SuperAdminPage from './pages/SuperAdminPage';
+import StaffPage from './pages/StaffPage';
+import TableOrderPage from './pages/TableOrderPage';
 import { AlertTriangle, CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -141,7 +143,7 @@ function MainRoutes() {
       const orderData = await res.json();
       
       const options = {
-        key: subStatus?.razorpayKeyId || 'rzp_live_SufeFLg6s8EJfH',
+        key: subStatus?.razorpayKeyId || (import.meta as any).env?.VITE_RAZORPAY_KEY_ID || '',
         amount: orderData.amount, // already in paise
         currency: orderData.currency,
         name: 'PMS Subscription',
@@ -199,6 +201,9 @@ function MainRoutes() {
         <Route path="/guest" element={<GuestPortalPage />} />
         <Route path="/h/:slug/guest/login" element={<GuestLoginPage />} />
         <Route path="/h/:slug/guest" element={<GuestPortalPage />} />
+        <Route path="/table-order" element={<TableOrderPage />} />
+        <Route path="/h/:slug/table/:tableNumber" element={<TableOrderPage />} />
+        <Route path="/table/:hotelId/:tableNumber" element={<TableOrderPage />} />
         <Route path="/pitch" element={<PresentationPage />} />
         <Route path="/super-admin" element={<SuperAdminPage />} />
         
@@ -214,6 +219,7 @@ function MainRoutes() {
           <Route path="/expenses" element={<ExpensesPage />} />
           <Route path="/billing" element={<BillingPage />} />
           <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/staff" element={<StaffPage />} />
           <Route path="/guest-requests" element={<GuestRequestsPage />} />
           <Route path="/restaurant" element={<RestaurantPage />} />
         </Route>

@@ -7,9 +7,9 @@ import { eq, and } from 'drizzle-orm';
 import { authenticateToken, AuthRequest } from '../middleware/auth.middleware.js';
 import crypto from 'crypto';
 import { sendEmail, getPasswordResetHtml, getOnboardingOtpHtml } from '../utils/email.js';
+import { getJwtSecret } from '../utils/security.js';
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'changeme123';
 
 // POST /api/auth/signup/request-otp
 router.post('/signup/request-otp', async (req, res) => {
@@ -32,8 +32,11 @@ router.post('/signup/request-otp', async (req, res) => {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
 
+    // Hash password immediately before storing in DB (prevents plaintext password leakage)
+    const passwordHash = await bcrypt.hash(adminPassword, 10);
+
     // Store OTP along with registration details payload
-    const payload = JSON.stringify({ hotelName, hotelAddress, adminName, adminPassword });
+    const payload = JSON.stringify({ hotelName, hotelAddress, adminName, passwordHash });
     
     // Save to DB
     await db.insert(onboardingOtps).values({
@@ -89,7 +92,7 @@ router.post('/signup/verify-otp', async (req, res) => {
     }
 
     // OTP matches and is valid! Onboard hotel.
-    const { hotelName, hotelAddress, adminName, adminPassword } = JSON.parse(otpRecord.payload);
+    const { hotelName, hotelAddress, adminName, passwordHash: preHashedPassword, adminPassword } = JSON.parse(otpRecord.payload);
 
     // Delete token
     await db.delete(onboardingOtps).where(eq(onboardingOtps.id, otpRecord.id));
@@ -108,13 +111,13 @@ router.post('/signup/verify-otp', async (req, res) => {
     }).returning();
     const hotelId = hotelResult[0].id;
 
-    // 2. Hash Password and Create Admin User
-    const passwordHash = await bcrypt.hash(adminPassword, 10);
+    // 2. Use pre-hashed password or hash legacy plaintext
+    const finalPasswordHash = preHashedPassword || (await bcrypt.hash(adminPassword, 10));
     const userResult = await db.insert(users).values({
       hotelId,
       name: adminName,
       email,
-      passwordHash,
+      passwordHash: finalPasswordHash,
       role: 'admin',
     }).returning();
     const adminUser = userResult[0];
@@ -154,7 +157,7 @@ router.post('/signup/verify-otp', async (req, res) => {
     // Generate JWT token automatically
     const token = jwt.sign(
       { userId: adminUser.id, hotelId: adminUser.hotelId, role: adminUser.role },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: '24h' }
     );
 
@@ -211,7 +214,7 @@ router.post('/login', async (req, res) => {
     // Generate JWT
     const token = jwt.sign(
       { userId: user.id, hotelId: user.hotelId, role: user.role },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: '24h' }
     );
 
@@ -285,7 +288,7 @@ router.post('/switch-hotel', authenticateToken, async (req: AuthRequest, res) =>
     // Generate new JWT with the new hotelId
     const token = jwt.sign(
       { userId: req.user!.userId, hotelId: hotelId, role: req.user!.role },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: '24h' }
     );
 

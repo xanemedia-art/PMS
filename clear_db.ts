@@ -9,7 +9,11 @@ const client = postgres(process.env.DATABASE_URL || '');
 const db = drizzle(client, { schema });
 
 async function clearDatabase() {
-  console.log('Initiating full database purge for production launch...');
+  if (process.env.CONFIRM_DB_PURGE !== 'YES_I_WANT_TO_PURGE_ALL_DATA') {
+    console.error('[SAFETY GUARD] clear_db.ts is locked to prevent catastrophic data loss! Set CONFIRM_DB_PURGE="YES_I_WANT_TO_PURGE_ALL_DATA" to proceed.');
+    process.exit(1);
+  }
+  console.log('Initiating full database purge...');
   try {
     // Drop in order of dependencies (leaves first, roots last)
     console.log('Purging agentRoomPrices...');

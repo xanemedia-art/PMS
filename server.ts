@@ -20,14 +20,21 @@ import superAdminRoutes from './src/api/routes/super-admin.routes.js';
 import subscriptionRoutes from './src/api/routes/subscription.routes.js';
 import billingRoutes from './src/api/routes/billing.routes.js';
 import notificationsRoutes from './src/api/routes/notifications.routes.js';
+import staffRoutes from './src/api/routes/staff.routes.js';
+import { ensureDbTables } from './src/db/initSchema.js';
 import { checkSubscription } from './src/api/middleware/subscription.middleware.js';
 
 
 import multer from 'multer';
 import fs from 'fs';
 
+import { authenticateToken } from './src/api/middleware/auth.middleware.js';
+
 dotenv.config();
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+if (process.env.ALLOW_INSECURE_TLS === 'true') {
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  console.warn('[SECURITY WARNING] TLS verification is disabled via ALLOW_INSECURE_TLS=true. Do not use in production!');
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -58,8 +65,11 @@ export async function createApp() {
   app.use('/uploads', express.static(uploadDir));
   app.use(checkSubscription);
 
-  // File Upload API (Supports local disk + Vercel / serverless EROFS fallback)
-  app.post('/api/upload', (req, res) => {
+  // File Upload API (Protected: Requires Authenticated Hotel User, Strict Image Validation)
+  const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
+  const ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+  app.post('/api/upload', authenticateToken, (req, res) => {
     upload.any()(req, res, (err) => {
       if (err) {
         console.error('Upload error:', err);
@@ -71,8 +81,14 @@ export async function createApp() {
         return res.status(400).json({ error: 'No file uploaded' });
       }
 
+      const ext = (file.originalname ? path.extname(file.originalname).toLowerCase() : '.jpg');
+      const mimeType = file.mimetype || 'image/jpeg';
+
+      if (!ALLOWED_EXTENSIONS.includes(ext) || !ALLOWED_MIME_TYPES.includes(mimeType)) {
+        return res.status(400).json({ error: 'Security restriction: Only valid image files (.jpg, .jpeg, .png, .webp, .gif) are permitted.' });
+      }
+
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-      const ext = file.originalname ? path.extname(file.originalname) : '.jpg';
       const filename = `${uniqueSuffix}${ext}`;
 
       // 1. Attempt writing to local disk
@@ -89,7 +105,6 @@ export async function createApp() {
         // 2. Read-Only File System Fallback (Vercel / AWS Lambda / Serverless)
         console.warn('Read-only environment detected (Vercel/Serverless). Using Base64 Data URL fallback:', diskErr?.message);
         
-        const mimeType = file.mimetype || 'image/jpeg';
         const base64Data = file.buffer.toString('base64');
         const dataUrl = `data:${mimeType};base64,${base64Data}`;
 
@@ -123,6 +138,10 @@ export async function createApp() {
   app.use('/api/super-admin', superAdminRoutes);
   app.use('/api/billing', billingRoutes);
   app.use('/api/notifications', notificationsRoutes);
+  app.use('/api/staff', staffRoutes);
+
+  // Initialize new database tables non-destructively
+  ensureDbTables().catch(err => console.warn('Schema non-destructive initialization warning:', err?.message));
 
 
   // Vite middleware for development

@@ -7,8 +7,8 @@ import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.
 
 const router = express.Router();
 
-const RAZORPAY_KEY_ID = 'rzp_live_SufeFLg6s8EJfH';
-const RAZORPAY_KEY_SECRET = 'egoVbpC6p4cAfPkNoW211f7f';
+const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || process.env.VITE_RAZORPAY_KEY_ID || '';
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || '';
 
 // Apply authentication to all subscription endpoints
 router.use(authenticateToken);

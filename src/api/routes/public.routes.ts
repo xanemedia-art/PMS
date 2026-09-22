@@ -29,7 +29,18 @@ router.get('/hotel/:hotelId', async (req, res) => {
       return;
     }
 
-    const hotel = await db.select().from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+    const hotel = await db.select({
+      id: hotels.id,
+      name: hotels.name,
+      address: hotels.address,
+      slug: hotels.slug,
+      gstin: hotels.gstin,
+      billingStateName: hotels.billingStateName,
+      billingStateCode: hotels.billingStateCode,
+      roomGstRate: hotels.roomGstRate,
+      foodGstRate: hotels.foodGstRate,
+    }).from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+
     if (!hotel || hotel.length === 0) {
       res.status(404).json({ error: 'Hotel not found' });
       return;
@@ -55,7 +66,18 @@ router.get('/hotel/s/:slug', async (req, res) => {
       return;
     }
 
-    const hotel = await db.select().from(hotels).where(eq(hotels.slug, slug)).limit(1);
+    const hotel = await db.select({
+      id: hotels.id,
+      name: hotels.name,
+      address: hotels.address,
+      slug: hotels.slug,
+      gstin: hotels.gstin,
+      billingStateName: hotels.billingStateName,
+      billingStateCode: hotels.billingStateCode,
+      roomGstRate: hotels.roomGstRate,
+      foodGstRate: hotels.foodGstRate,
+    }).from(hotels).where(eq(hotels.slug, slug)).limit(1);
+
     if (!hotel || hotel.length === 0) {
       res.status(404).json({ error: 'Property not found' });
       return;
@@ -177,7 +199,7 @@ router.get('/hotel/:hotelId/availability', async (req, res) => {
 router.post('/hotel/:hotelId/book', async (req, res) => {
   try {
     const hotelId = parseInt(req.params.hotelId);
-    const { roomTypeId, roomCount, planId, guestName, guestEmail, guestPhone, pax, extraBeddings, notes, checkInDate, checkOutDate } = req.body;
+    const { roomTypeId, roomCount, planId, guestName, guestEmail, guestPhone, pax, extraBeddings, notes, checkInDate, checkOutDate, totalEstimatedAmount, amountPaid, paymentStatus } = req.body;
 
     if (isNaN(hotelId) || !roomTypeId || !guestName || !checkInDate || !checkOutDate) {
         res.status(400).json({ error: 'Missing required parameters' });
@@ -237,6 +259,8 @@ router.post('/hotel/:hotelId/book', async (req, res) => {
 
     const numRooms = roomCount ? parseInt(roomCount) : 1;
     const valuesToInsert = [];
+    const perRoomEstimated = totalEstimatedAmount ? (parseFloat(totalEstimatedAmount) / numRooms) : null;
+    const perRoomPaid = amountPaid ? (parseFloat(amountPaid) / numRooms) : perRoomEstimated;
     
     for (let i = 0; i < numRooms; i++) {
         valuesToInsert.push({
@@ -254,6 +278,10 @@ router.post('/hotel/:hotelId/book', async (req, res) => {
           checkInDate: normalizedCheckIn,
           checkOutDate: normalizedCheckOut,
           status: 'pending' as const,
+          paymentStatus: 'pay_at_checkout' as const,
+          totalEstimatedAmount: perRoomEstimated,
+          amountPaid: 0,
+          paymentMethod: 'pay_at_checkout',
           notes: notes || null
         });
     }

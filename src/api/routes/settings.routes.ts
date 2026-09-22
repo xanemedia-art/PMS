@@ -252,6 +252,30 @@ router.patch('/hotels/:id', requireRole(['admin']), async (req: AuthRequest, res
       return;
     }
 
+    // Tenant isolation: verify target hotel belongs to user's hotel chain
+    const userHotelId = req.user!.hotelId;
+    const currentHotelResult = await db.select().from(hotels).where(eq(hotels.id, userHotelId)).limit(1);
+    const currentHotel = currentHotelResult[0];
+    if (!currentHotel) {
+      res.status(403).json({ error: 'Forbidden: Current hotel context not found' });
+      return;
+    }
+
+    const chainParentId = currentHotel.parentId || currentHotel.id;
+    const targetHotelResult = await db.select().from(hotels).where(eq(hotels.id, id)).limit(1);
+    const targetHotel = targetHotelResult[0];
+
+    if (!targetHotel) {
+      res.status(404).json({ error: 'Hotel not found' });
+      return;
+    }
+
+    const isMemberOfChain = targetHotel.id === chainParentId || targetHotel.parentId === chainParentId;
+    if (!isMemberOfChain) {
+      res.status(403).json({ error: 'Forbidden: You are not authorized to manage properties outside your hotel chain.' });
+      return;
+    }
+
     const updated = await db.update(hotels)
       .set({ 
         name, 
@@ -266,11 +290,6 @@ router.patch('/hotels/:id', requireRole(['admin']), async (req: AuthRequest, res
       })
       .where(eq(hotels.id, id))
       .returning();
-
-    if (updated.length === 0) {
-      res.status(404).json({ error: 'Hotel not found' });
-      return;
-    }
 
     res.json(updated[0]);
   } catch (error) {
@@ -290,6 +309,30 @@ router.delete('/hotels/:id', requireRole(['admin']), async (req: AuthRequest, re
     // Do not allow deleting the current hotel the user is logged into to prevent locking themselves out
     if (id === req.user!.hotelId) {
       res.status(400).json({ error: 'Cannot delete the property you are currently managing' });
+      return;
+    }
+
+    // Tenant isolation: verify target hotel belongs to user's hotel chain
+    const userHotelId = req.user!.hotelId;
+    const currentHotelResult = await db.select().from(hotels).where(eq(hotels.id, userHotelId)).limit(1);
+    const currentHotel = currentHotelResult[0];
+    if (!currentHotel) {
+      res.status(403).json({ error: 'Forbidden: Current hotel context not found' });
+      return;
+    }
+
+    const chainParentId = currentHotel.parentId || currentHotel.id;
+    const targetHotelResult = await db.select().from(hotels).where(eq(hotels.id, id)).limit(1);
+    const targetHotel = targetHotelResult[0];
+
+    if (!targetHotel) {
+      res.status(404).json({ error: 'Hotel not found' });
+      return;
+    }
+
+    const isMemberOfChain = targetHotel.id === chainParentId || targetHotel.parentId === chainParentId;
+    if (!isMemberOfChain) {
+      res.status(403).json({ error: 'Forbidden: You are not authorized to delete properties outside your hotel chain.' });
       return;
     }
 

@@ -30,6 +30,9 @@ interface Plan {
 interface HotelInfo {
   name: string;
   address: string | null;
+  gstin?: string | null;
+  billingStateName?: string | null;
+  roomGstRate?: number | string | null;
 }
 
 export default function BookingEnginePage() {
@@ -170,7 +173,7 @@ export default function BookingEnginePage() {
     });
   };
 
-  const calculateTotal = () => {
+  const calculateBaseTotal = () => {
     let total = 0;
     const nightsCount = Math.max(1, (new Date(checkOut).getTime() - new Date(checkIn).getTime()) / (1000 * 60 * 60 * 24));
     Object.keys(selectedRooms).forEach(roomId => {
@@ -185,6 +188,23 @@ export default function BookingEnginePage() {
     return total;
   };
 
+  const getGstRate = () => {
+    if (hotel?.roomGstRate !== undefined && hotel?.roomGstRate !== null) {
+      return parseFloat(hotel.roomGstRate.toString()) || 12.0;
+    }
+    return 12.0;
+  };
+
+  const calculateGstAmount = () => {
+    const base = calculateBaseTotal();
+    const rate = getGstRate();
+    return Math.round(((base * rate) / 100) * 100) / 100;
+  };
+
+  const calculateTotal = () => {
+    return Math.round((calculateBaseTotal() + calculateGstAmount()) * 100) / 100;
+  };
+
   const handleBook = async () => {
     if (!guestName || !guestEmail || !guestPhone) {
       alert("Please fill in all contact details in the reservation form.");
@@ -192,11 +212,19 @@ export default function BookingEnginePage() {
     }
     setLoading(true);
     try {
+      const grandTotal = calculateTotal();
+      const grandBase = calculateBaseTotal();
       for (const roomId of Object.keys(selectedRooms)) {
         const rt = roomTypes.find(r => r.id === roomId);
         if (!rt) continue;
         
         const extraBeds = Math.max(0, (selectedRooms[roomId].pax - rt.capacity));
+        const nightsCount = Math.max(1, (new Date(checkOut).getTime() - new Date(checkIn).getTime()) / (1000 * 60 * 60 * 24));
+        const plan = plans.find(p => p.id === selectedRooms[roomId].planId);
+        const multiplier = plan?.priceMultiplier || 1.0;
+        const roomBase = ((rt.price * multiplier) + (extraBeds * 500)) * selectedRooms[roomId].count * nightsCount;
+        const roomRatio = grandBase > 0 ? roomBase / grandBase : 1;
+        const roomEstimatedTotal = Math.round((grandTotal * roomRatio) * 100) / 100;
         
         const res = await fetch(`/api/public/hotel/${resolvedHotelId}/book`, {
           method: 'POST',
@@ -212,7 +240,10 @@ export default function BookingEnginePage() {
             extraBeddings: extraBeds,
             notes: specialRequests,
             checkInDate: checkIn,
-            checkOutDate: checkOut
+            checkOutDate: checkOut,
+            totalEstimatedAmount: roomEstimatedTotal,
+            amountPaid: roomEstimatedTotal,
+            paymentStatus: 'paid'
           })
         });
         
@@ -488,13 +519,21 @@ export default function BookingEnginePage() {
                       })}
                     </div>
 
-                    <div className="bg-slate-900 p-6 rounded-2xl text-white flex justify-between items-center">
-                      <div>
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Stay Dates</p>
-                        <p className="font-bold text-sm mt-1">{format(new Date(checkIn), 'MMM dd, yyyy')} to {format(new Date(checkOut), 'MMM dd, yyyy')}</p>
+                    <div className="bg-slate-900 p-6 rounded-2xl text-white space-y-2">
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-400">Stay Duration:</span>
+                        <span className="font-semibold text-slate-200">{format(new Date(checkIn), 'MMM dd, yyyy')} to {format(new Date(checkOut), 'MMM dd, yyyy')} ({nightsNum} night{nightsNum === 1 ? '' : 's'})</span>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Estimated Total</p>
+                      <div className="flex justify-between items-center text-xs border-t border-slate-800 pt-2">
+                        <span className="text-slate-400">Base Room Tariff:</span>
+                        <span className="font-mono font-bold">₹{calculateBaseTotal().toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs">
+                        <span className="text-slate-400">Goods & Services Tax (GST {getGstRate()}%):</span>
+                        <span className="font-mono font-bold text-blue-300">+ ₹{calculateGstAmount().toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="border-t border-slate-800 pt-2 flex justify-between items-center">
+                        <p className="text-xs text-white font-bold uppercase tracking-wider">Estimated Grand Total</p>
                         <p className="font-black text-2xl text-blue-400 font-sans">₹{calculateTotal().toLocaleString('en-IN')}</p>
                       </div>
                     </div>
@@ -590,10 +629,22 @@ export default function BookingEnginePage() {
                       </div>
                     </div>
 
-                    <div className="bg-blue-50 border border-blue-100 rounded-2xl p-6 text-center">
-                      <p className="text-xs uppercase tracking-wider font-black text-blue-600">Total Booking Price</p>
-                      <p className="text-4xl font-black text-blue-700 mt-2 font-sans">₹{calculateTotal().toLocaleString('en-IN')}</p>
-                      <p className="text-[10px] text-slate-400 mt-1 font-semibold">Taxes & fees included. Pay at the hotel.</p>
+                    <div className="bg-blue-50 border border-blue-100 rounded-2xl p-6 space-y-2">
+                      <div className="flex justify-between items-center text-xs text-slate-600">
+                        <span>Room Charges ({nightsNum} night{nightsNum === 1 ? '' : 's'}):</span>
+                        <span className="font-mono font-bold text-slate-800">₹{calculateBaseTotal().toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="flex justify-between items-center text-xs text-slate-600">
+                        <span>Statutory GST ({getGstRate()}%):</span>
+                        <span className="font-mono font-bold text-blue-700">+ ₹{calculateGstAmount().toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="border-t border-blue-200 pt-2 flex justify-between items-baseline">
+                        <p className="text-xs uppercase tracking-wider font-black text-blue-800">Total Payable Amount</p>
+                        <p className="text-3xl font-black text-blue-700 font-sans">₹{calculateTotal().toLocaleString('en-IN')}</p>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-1 font-semibold text-center">
+                        Inclusive of {getGstRate()}% GST. Instant confirmation with full booking settlement.
+                      </p>
                     </div>
 
                     <div className="bg-green-50 text-green-700 text-xs font-semibold p-4 rounded-xl border border-green-100 flex items-center gap-3">
@@ -890,10 +941,23 @@ export default function BookingEnginePage() {
                   animate={{ opacity: 1, y: 0 }} 
                   className="pt-8 border-t border-slate-800 space-y-6"
                 >
-                  <div className="flex justify-between items-end">
-                    <div className="space-y-1">
-                      <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Total Value</p>
-                      <p className="text-5xl font-black tracking-tighter font-sans">₹{calculateTotal().toLocaleString('en-IN')}</p>
+                  <div className="space-y-3">
+                    <div className="space-y-1 text-xs text-slate-400">
+                      <div className="flex justify-between items-center">
+                        <span>Room Tariff:</span>
+                        <span className="font-mono font-bold text-slate-200">₹{calculateBaseTotal().toLocaleString('en-IN')}</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span>GST ({getGstRate()}%):</span>
+                        <span className="font-mono font-bold text-blue-400">+ ₹{calculateGstAmount().toLocaleString('en-IN')}</span>
+                      </div>
+                    </div>
+
+                    <div className="pt-2 border-t border-slate-800 flex justify-between items-end">
+                      <div className="space-y-1">
+                        <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">Total (Inc. GST)</p>
+                        <p className="text-4xl font-black tracking-tighter font-sans text-white">₹{calculateTotal().toLocaleString('en-IN')}</p>
+                      </div>
                     </div>
                   </div>
 

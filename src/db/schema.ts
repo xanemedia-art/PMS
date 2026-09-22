@@ -89,6 +89,11 @@ export const bookings = pgTable('bookings', {
   extraBeddings: integer('extra_beddings').default(0),
   notes: text('notes'),
   showGoogleReview: boolean('show_google_review').default(false),
+  paymentStatus: text('payment_status').default('pay_at_checkout'), // 'paid' | 'pay_at_checkout' | 'partial'
+  totalEstimatedAmount: real('total_estimated_amount').default(0),
+  amountPaid: real('amount_paid').default(0),
+  paymentMethod: text('payment_method').default('cash'), // 'cash' | 'upi' | 'card' | 'bank_transfer' | 'agent_credit' | 'other'
+  paymentNotes: text('payment_notes'),
   createdAt: timestamp('created_at').defaultNow(),
 });
 
@@ -231,5 +236,39 @@ export const restaurantCategories = pgTable('restaurant_categories', {
   id: serial('id').primaryKey(),
   hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
   name: text('name').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// 19. Staff Members & Monthly Salaries
+export const staffMembers = pgTable('staff_members', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  userId: integer('user_id').references(() => users.id), // Optional link to login account
+  name: text('name').notNull(),
+  email: text('email'),
+  phone: text('phone'),
+  designation: text('designation').notNull(), // Front Desk, Chef, Housekeeping, Manager, etc.
+  monthlySalary: real('monthly_salary').notNull(),
+  salaryPayoutDay: integer('salary_payout_day').default(1).notNull(), // Day of month (e.g. 1st)
+  joiningDate: text('joining_date'),
+  status: text('status').default('active').notNull(), // 'active' | 'inactive'
+  bankDetails: text('bank_details'), // UPI ID, Bank Account, IFSC
+  lastPaidMonth: text('last_paid_month'), // e.g. "2026-08"
+  lastPaidDate: timestamp('last_paid_date'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// 20. Restaurant Dining Tables
+export const restaurantTables = pgTable('restaurant_tables', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  tableNumber: text('table_number').notNull(), // e.g. "T-01", "Table 4"
+  capacity: integer('capacity').default(4).notNull(),
+  section: text('section').default('Main Dining'),
+  status: text('status').default('vacant').notNull(), // 'vacant' | 'occupied' | 'billed'
+  activeOrderId: integer('active_order_id'), // Reference to restaurantOrders.id
+  currentBillAmount: real('current_bill_amount').default(0),
+  currentOrderJson: text('current_order_json'), // Stringified JSON items array
+  notes: text('notes'),
   createdAt: timestamp('created_at').defaultNow(),
 });

@@ -37,6 +37,11 @@ router.get('/', async (req: AuthRequest, res) => {
       agentCommission: bookings.agentCommission,
       notes: bookings.notes,
       extraBeddings: bookings.extraBeddings,
+      paymentStatus: bookings.paymentStatus,
+      totalEstimatedAmount: bookings.totalEstimatedAmount,
+      amountPaid: bookings.amountPaid,
+      paymentMethod: bookings.paymentMethod,
+      paymentNotes: bookings.paymentNotes,
       createdAt: bookings.createdAt,
       bookedBy: {
         name: users.name,
@@ -79,7 +84,11 @@ router.post('/', async (req: AuthRequest, res) => {
     const hotelId = req.user!.hotelId;
     const bookedById = req.user!.userId;
     const userRole = req.user!.role;
-    const { roomId, roomTypeId, roomCount, roomConfigs, planId, guestName, guestEmail, guestPhone, checkInDate, checkOutDate, agentCommission } = req.body;
+    const { 
+      roomId, roomTypeId, roomCount, roomConfigs, planId, 
+      guestName, guestEmail, guestPhone, checkInDate, checkOutDate, 
+      agentCommission, paymentStatus, totalEstimatedAmount, amountPaid, paymentMethod, paymentNotes 
+    } = req.body;
 
     const normalizedCheckIn = new Date(checkInDate).toISOString().split('T')[0];
     const normalizedCheckOut = new Date(checkOutDate).toISOString().split('T')[0];
@@ -194,6 +203,11 @@ router.post('/', async (req: AuthRequest, res) => {
           checkInDate: normalizedCheckIn,
           checkOutDate: normalizedCheckOut,
           agentCommission: userRole === 'agent' ? agentCommission : null,
+          paymentStatus: paymentStatus || 'pay_at_checkout',
+          totalEstimatedAmount: totalEstimatedAmount ? parseFloat(totalEstimatedAmount) : null,
+          amountPaid: amountPaid ? parseFloat(amountPaid) : 0,
+          paymentMethod: paymentMethod || null,
+          paymentNotes: paymentNotes || null,
           status: 'pending'
        });
     }
@@ -303,11 +317,11 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
 
     if (status === 'cancelled') {
         if (updated[0].roomId) {
-            await db.update(rooms).set({ status: 'available' }).where(eq(rooms.id, updated[0].roomId));
+            await db.update(rooms).set({ status: 'available' }).where(and(eq(rooms.id, updated[0].roomId), eq(rooms.hotelId, hotelId)));
         }
     } else if (status === 'checked_out') {
         if (updated[0].roomId) {
-            await db.update(rooms).set({ status: 'dirty' }).where(eq(rooms.id, updated[0].roomId));
+            await db.update(rooms).set({ status: 'dirty' }).where(and(eq(rooms.id, updated[0].roomId), eq(rooms.hotelId, hotelId)));
             // Also create a housekeeping task
             await db.insert(housekeepingTasks).values({
               hotelId,
@@ -397,11 +411,11 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
             return;
         }
 
-        // Verify the room is available
-        const roomResult = await db.select().from(rooms).where(eq(rooms.id, assignedRoomId)).limit(1);
+        // Verify the room is available in this hotel
+        const roomResult = await db.select().from(rooms).where(and(eq(rooms.id, assignedRoomId), eq(rooms.hotelId, hotelId))).limit(1);
         if (roomResult.length === 0) {
             await db.update(bookings).set({ status: 'confirmed' }).where(eq(bookings.id, id));
-            res.status(400).json({ error: 'Selected room not found.' });
+            res.status(400).json({ error: 'Selected room not found in this hotel.' });
             return;
         }
         if (roomResult[0].status !== 'available' && roomResult[0].id !== updated[0].roomId) {
@@ -412,7 +426,7 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff']), async (r
 
         await db.update(bookings).set({ roomId: assignedRoomId }).where(eq(bookings.id, id));
         const randomPin = Math.floor(1000 + Math.random() * 9000).toString();
-        await db.update(rooms).set({ status: 'occupied', guestPin: randomPin }).where(eq(rooms.id, assignedRoomId));
+        await db.update(rooms).set({ status: 'occupied', guestPin: randomPin }).where(and(eq(rooms.id, assignedRoomId), eq(rooms.hotelId, hotelId)));
     }
 
     // Re-fetch booking to get updated roomId after room assignment
@@ -612,8 +626,39 @@ router.post('/:id/toggle-review', requireRole(['admin', 'manager', 'management']
 
     res.json(updated[0]);
   } catch (error) {
-    console.error('Toggle review error:', error);
     res.status(500).json({ error: 'Failed to toggle review visibility' });
+  }
+});
+
+// PATCH /:id/payment - Update payment status, amount paid, and settlement details
+router.patch('/:id/payment', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+    const { paymentStatus, amountPaid, totalEstimatedAmount, paymentMethod, paymentNotes } = req.body;
+
+    const existing = await db.select().from(bookings).where(and(eq(bookings.id, id), eq(bookings.hotelId, hotelId))).limit(1);
+    if (existing.length === 0) {
+      res.status(404).json({ error: 'Booking not found' });
+      return;
+    }
+
+    const updateFields: any = {};
+    if (paymentStatus !== undefined) updateFields.paymentStatus = paymentStatus;
+    if (amountPaid !== undefined) updateFields.amountPaid = parseFloat(amountPaid) || 0;
+    if (totalEstimatedAmount !== undefined) updateFields.totalEstimatedAmount = parseFloat(totalEstimatedAmount) || 0;
+    if (paymentMethod !== undefined) updateFields.paymentMethod = paymentMethod;
+    if (paymentNotes !== undefined) updateFields.paymentNotes = paymentNotes;
+
+    const updated = await db.update(bookings)
+      .set(updateFields)
+      .where(and(eq(bookings.id, id), eq(bookings.hotelId, hotelId)))
+      .returning();
+
+    res.json(updated[0]);
+  } catch (error) {
+    console.error('Update booking payment error:', error);
+    res.status(500).json({ error: 'Failed to update booking payment details' });
   }
 });
 

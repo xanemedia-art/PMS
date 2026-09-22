@@ -22,8 +22,9 @@ import {
 import { eq, and, ne } from 'drizzle-orm';
 import { authenticateToken, AuthRequest } from '../middleware/auth.middleware.js';
 
+import { getJwtSecret } from '../utils/security.js';
+
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'changeme123';
 
 // Helper to authenticate super-admin role
 const requireSuperAdmin = (req: AuthRequest, res: express.Response, next: express.NextFunction) => {
@@ -40,9 +41,19 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     
     const superEmail = process.env.SUPER_ADMIN_EMAIL || 'superadmin@xane.com';
-    const superPassword = process.env.SUPER_ADMIN_PASSWORD || 'supersecretpms123';
+    const superPassword = process.env.SUPER_ADMIN_PASSWORD;
 
-    if (email !== superEmail || password !== superPassword) {
+    if (!superPassword || superPassword === 'supersecretpms123') {
+      if (process.env.NODE_ENV === 'production') {
+        console.error('[SECURITY CRITICAL] SUPER_ADMIN_PASSWORD is unset or using default in production! Rejecting super-admin login.');
+        res.status(500).json({ error: 'Super-admin credentials not securely configured on server.' });
+        return;
+      }
+    }
+
+    const effectivePassword = superPassword || 'supersecretpms123';
+
+    if (!password || email !== superEmail || password !== effectivePassword) {
       res.status(401).json({ error: 'Invalid super-admin credentials' });
       return;
     }
@@ -50,7 +61,7 @@ router.post('/login', async (req, res) => {
     // Generate JWT for super-admin
     const token = jwt.sign(
       { userId: 0, hotelId: 0, role: 'super_admin' },
-      JWT_SECRET,
+      getJwtSecret(),
       { expiresIn: '24h' }
     );
 

@@ -1,6 +1,6 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { rooms, roomTypes } from '../../db/schema.js';
+import { rooms, roomTypes, housekeepingTasks, bookings } from '../../db/schema.js';
 import { eq, and } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
@@ -166,6 +166,45 @@ router.post('/:id/reset-pin', requireRole(['admin', 'manager', 'staff']), async 
     res.json(updated[0]);
   } catch (error) {
     res.status(500).json({ error: 'Failed to reset room PIN' });
+  }
+});
+
+// Delete room (Admin/Manager only)
+router.delete('/:id', requireRole(['admin', 'manager']), async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+
+    // 1. Check if room exists and belongs to hotel
+    const targetRoom = await db.select().from(rooms)
+      .where(and(eq(rooms.id, id), eq(rooms.hotelId, hotelId)))
+      .limit(1);
+
+    if (targetRoom.length === 0) {
+      res.status(404).json({ error: 'Room not found' });
+      return;
+    }
+
+    if (targetRoom[0].status === 'occupied') {
+      res.status(400).json({ error: 'Cannot delete Room while occupied. Please check out or reassign the guest first.' });
+      return;
+    }
+
+    // 2. Clean up housekeeping tasks
+    await db.delete(housekeepingTasks).where(and(eq(housekeepingTasks.roomId, id), eq(housekeepingTasks.hotelId, hotelId)));
+
+    // 3. Unlink past bookings
+    await db.update(bookings).set({ roomId: null }).where(and(eq(bookings.roomId, id), eq(bookings.hotelId, hotelId)));
+
+    // 4. Delete the room
+    const deleted = await db.delete(rooms)
+      .where(and(eq(rooms.id, id), eq(rooms.hotelId, hotelId)))
+      .returning();
+
+    res.json({ success: true, message: `Room ${deleted[0]?.number} deleted successfully` });
+  } catch (error: any) {
+    console.error('Delete room error:', error);
+    res.status(500).json({ error: 'Failed to delete room' });
   }
 });
 

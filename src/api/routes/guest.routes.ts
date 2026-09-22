@@ -4,6 +4,7 @@ import { db } from '../../db/index.js';
 import { rooms, bookings, housekeepingTasks, restaurantOrders, guestChats, hotels, restaurantMenu, bookingExpenses, plans, roomTypes, users, agentRoomPrices } from '../../db/schema.js';
 import { eq, and, desc } from 'drizzle-orm';
 import { authenticateToken, AuthRequest } from '../middleware/auth.middleware.js';
+import { getJwtSecret, checkRateLimit } from '../utils/security.js';
 
 
 const router = express.Router();
@@ -29,7 +30,7 @@ export const authenticateGuestToken = (req: GuestRequest, res: Response, next: N
     return;
   }
 
-  jwt.verify(token, process.env.JWT_SECRET || 'changeme123', (err: any, guest: any) => {
+  jwt.verify(token, getJwtSecret(), (err: any, guest: any) => {
     if (err || !guest || guest.role !== 'guest') {
       res.status(401).json({ error: 'Invalid guest token' });
       return;
@@ -43,23 +44,43 @@ export const authenticateGuestToken = (req: GuestRequest, res: Response, next: N
 // 1. Guest Login (Room Number + 4 Digit PIN)
 router.post('/login', async (req: Request, res: Response) => {
   try {
-    const { roomNumber, pin } = req.body;
+    const { roomNumber, pin, hotelId, hotelSlug } = req.body;
 
     if (!roomNumber || !pin) {
       res.status(400).json({ error: 'Room number and PIN are required' });
       return;
     }
 
+    // Rate Limiting: Max 5 attempts per minute per IP / room combination
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateCheck = checkRateLimit(`guest_login_${clientIp}_${roomNumber}`, 5, 60000);
+    if (!rateCheck.allowed) {
+      res.status(429).json({ error: 'Too many login attempts. Please wait 1 minute before trying again.' });
+      return;
+    }
+
+    // Resolve target hotel if provided
+    let targetHotelId: number | null = null;
+    if (hotelId) {
+      targetHotelId = parseInt(hotelId);
+    } else if (hotelSlug) {
+      const h = await db.select().from(hotels).where(eq(hotels.slug, hotelSlug)).limit(1);
+      if (h.length > 0) targetHotelId = h[0].id;
+    }
+
+    const roomConditions = [
+      eq(rooms.number, roomNumber.trim()),
+      eq(rooms.guestPin, pin.trim()),
+      eq(rooms.status, 'occupied')
+    ];
+    if (targetHotelId) {
+      roomConditions.push(eq(rooms.hotelId, targetHotelId));
+    }
+
     // Find the occupied room matching number and guestPin
     const roomMatches = await db.select()
       .from(rooms)
-      .where(
-        and(
-          eq(rooms.number, roomNumber.trim()),
-          eq(rooms.guestPin, pin.trim()),
-          eq(rooms.status, 'occupied')
-        )
-      )
+      .where(and(...roomConditions))
       .limit(1);
 
     if (roomMatches.length === 0) {
@@ -97,7 +118,7 @@ router.post('/login', async (req: Request, res: Response) => {
       role: 'guest',
     };
 
-    const token = jwt.sign(guestPayload, process.env.JWT_SECRET || 'changeme123', { expiresIn: '7d' });
+    const token = jwt.sign(guestPayload, getJwtSecret(), { expiresIn: '7d' });
 
     res.json({
       token,
@@ -128,7 +149,7 @@ router.get('/booking', authenticateGuestToken, async (req: GuestRequest, res: Re
     })
     .from(bookings)
     .innerJoin(hotels, eq(bookings.hotelId, hotels.id))
-    .where(eq(bookings.id, bookingId))
+    .where(and(eq(bookings.id, bookingId), eq(bookings.hotelId, hotelId)))
     .limit(1);
 
     if (bookingDetails.length === 0) {
@@ -136,7 +157,21 @@ router.get('/booking', authenticateGuestToken, async (req: GuestRequest, res: Re
       return;
     }
 
-    res.json(bookingDetails[0]);
+    // Sanitize hotel information to protect confidential subscription/internal data
+    const rawHotel = bookingDetails[0].hotel;
+    const sanitizedHotel = {
+      id: rawHotel.id,
+      name: rawHotel.name,
+      address: rawHotel.address,
+      slug: rawHotel.slug,
+      roomGstRate: rawHotel.roomGstRate,
+      foodGstRate: rawHotel.foodGstRate,
+    };
+
+    res.json({
+      booking: bookingDetails[0].booking,
+      hotel: sanitizedHotel
+    });
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch booking details' });
   }

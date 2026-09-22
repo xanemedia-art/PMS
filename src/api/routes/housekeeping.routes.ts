@@ -47,7 +47,7 @@ router.patch('/:id/status', requireRole(['admin', 'manager', 'staff', 'housekeep
       }
       
       // Mark room as available
-      await db.update(rooms).set({ status: 'available' }).where(eq(rooms.id, task[0].roomId));
+      await db.update(rooms).set({ status: 'available' }).where(and(eq(rooms.id, task[0].roomId), eq(rooms.hotelId, hotelId)));
       
       // Delete the housekeeping task completely to declutter
       await db.delete(housekeepingTasks).where(and(eq(housekeepingTasks.id, id), eq(housekeepingTasks.hotelId, hotelId)));
@@ -86,7 +86,7 @@ router.post('/', requireRole(['admin', 'manager', 'staff']), async (req: AuthReq
       status: 'dirty'
     }).returning();
 
-    await db.update(rooms).set({ status: 'dirty' }).where(eq(rooms.id, roomId));
+    await db.update(rooms).set({ status: 'dirty' }).where(and(eq(rooms.id, roomId), eq(rooms.hotelId, hotelId)));
 
     res.json(newTask[0]);
   } catch (error) {

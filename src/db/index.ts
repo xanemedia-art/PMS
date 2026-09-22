@@ -15,12 +15,22 @@ if (!connectionString) {
 let queryClient;
 
 if (connectionString && connectionString.includes('db.nudguruciuocipqdgyeq.supabase.co')) {
+  let parsedPassword = process.env.DB_PASSWORD || '';
+  if (!parsedPassword) {
+    try {
+      const parsedUrl = new URL(connectionString);
+      parsedPassword = decodeURIComponent(parsedUrl.password);
+    } catch {
+      // ignore parse error
+    }
+  }
+
   queryClient = postgres({
     host: ['2406:da1c:61c:d601:5aea:4a05:a559:f294'],
     port: [5432],
     database: 'postgres',
     username: 'postgres',
-    password: 'Sharma_@224165',
+    password: parsedPassword,
     ssl: { rejectUnauthorized: false },
     max: 1,
     idle_timeout: 20,

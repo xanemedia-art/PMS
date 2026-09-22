@@ -1,8 +1,9 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { restaurantInventory, restaurantOrders, bookings, rooms, restaurantMenu, restaurantCategories } from '../../db/schema.js';
+import { restaurantInventory, restaurantOrders, bookings, rooms, restaurantMenu, restaurantCategories, restaurantTables, hotels } from '../../db/schema.js';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
+import { checkRateLimit } from '../utils/security.js';
 
 const router = express.Router();
 
@@ -35,6 +36,183 @@ router.get('/menu', async (req, res) => {
     res.json(menu);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch restaurant menu' });
+  }
+});
+
+// --- PUBLIC TABLE ORDERING ROUTES (For QR scans) ---
+
+// Get table information, active menu, and current table order
+router.get('/public/table/:hotelId/:tableNumber', async (req, res) => {
+  try {
+    const hotelId = parseInt(req.params.hotelId);
+    const tableNumber = decodeURIComponent(req.params.tableNumber);
+
+    if (isNaN(hotelId) || !tableNumber) {
+      res.status(400).json({ error: 'Hotel ID and Table Number are required' });
+      return;
+    }
+
+    const hotelResult = await db.select({
+      id: hotels.id,
+      name: hotels.name,
+      address: hotels.address,
+      slug: hotels.slug,
+      foodGstRate: hotels.foodGstRate
+    }).from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+
+    if (hotelResult.length === 0) {
+      res.status(404).json({ error: 'Hotel not found' });
+      return;
+    }
+
+    let table = await db.select().from(restaurantTables)
+      .where(and(eq(restaurantTables.hotelId, hotelId), eq(restaurantTables.tableNumber, tableNumber)))
+      .limit(1);
+
+    // If table doesn't exist, create it on-demand for smooth QR scanning
+    if (table.length === 0) {
+      const created = await db.insert(restaurantTables).values({
+        hotelId,
+        tableNumber,
+        capacity: 4,
+        section: 'Main Dining',
+        status: 'vacant'
+      }).returning();
+      table = created;
+    }
+
+    const menu = await db.select()
+      .from(restaurantMenu)
+      .where(and(eq(restaurantMenu.hotelId, hotelId), eq(restaurantMenu.isAvailable, true)))
+      .orderBy(restaurantMenu.category, restaurantMenu.name);
+
+    res.json({
+      hotel: hotelResult[0],
+      table: table[0],
+      menu
+    });
+  } catch (error) {
+    console.error('Public table info error:', error);
+    res.status(500).json({ error: 'Failed to fetch table details' });
+  }
+});
+
+// Guest places or adds to dine-in table order
+router.post('/public/table/order', async (req, res) => {
+  try {
+    const { hotelId, tableNumber, items, totalAmount, guestName, guestPhone, notes } = req.body;
+
+    if (!hotelId || !tableNumber || !items || !Array.isArray(items)) {
+      res.status(400).json({ error: 'Invalid order payload' });
+      return;
+    }
+
+    // 1. Create order record (KOT)
+    const newOrder = await db.insert(restaurantOrders).values({
+      hotelId: parseInt(hotelId),
+      tableNumber,
+      items: JSON.stringify(items),
+      totalAmount: parseFloat(totalAmount) || 0,
+      status: 'pending',
+      type: 'dine_in'
+    }).returning();
+
+    // 2. Update table state to occupied
+    await db.update(restaurantTables).set({
+      status: 'occupied',
+      activeOrderId: newOrder[0].id,
+      currentBillAmount: parseFloat(totalAmount) || 0,
+      currentOrderJson: JSON.stringify(items),
+      notes: notes || (guestName ? `Guest: ${guestName} (${guestPhone || ''})` : null)
+    }).where(and(eq(restaurantTables.hotelId, parseInt(hotelId)), eq(restaurantTables.tableNumber, tableNumber)));
+
+    res.json({ success: true, order: newOrder[0] });
+  } catch (error) {
+    console.error('Public table order error:', error);
+    res.status(500).json({ error: 'Failed to submit table order' });
+  }
+});
+
+// Authenticated Charge to Room for In-House Guests
+router.post('/public/table/charge-to-room', async (req, res) => {
+  try {
+    const { hotelId, tableNumber, roomNumber, guestPin, items, totalAmount } = req.body;
+
+    if (!hotelId || !tableNumber || !roomNumber || !guestPin) {
+      res.status(400).json({ error: 'Room number and PIN are required' });
+      return;
+    }
+
+    // Rate Limiting: Max 5 PIN attempts per minute per IP / room
+    const clientIp = req.ip || req.socket.remoteAddress || 'unknown';
+    const rateCheck = checkRateLimit(`charge_room_${clientIp}_${hotelId}_${roomNumber}`, 5, 60000);
+    if (!rateCheck.allowed) {
+      res.status(429).json({ error: 'Too many authentication attempts. Please wait 1 minute before trying again.' });
+      return;
+    }
+
+    // 1. Verify room and PIN
+    const roomResult = await db.select().from(rooms).where(
+      and(
+        eq(rooms.hotelId, parseInt(hotelId)),
+        eq(rooms.number, roomNumber.trim())
+      )
+    ).limit(1);
+
+    if (roomResult.length === 0) {
+      res.status(404).json({ error: 'Room number not found in this hotel' });
+      return;
+    }
+
+    const room = roomResult[0];
+
+    // Check PIN match (case-insensitive trim)
+    if (!room.guestPin || room.guestPin.trim() !== guestPin.trim()) {
+      res.status(401).json({ error: 'Invalid Room PIN. Please check your guest PIN or ask reception.' });
+      return;
+    }
+
+    // 2. Find active checked-in booking for this room
+    const bookingResult = await db.select().from(bookings).where(
+      and(
+        eq(bookings.hotelId, parseInt(hotelId)),
+        eq(bookings.roomId, room.id),
+        eq(bookings.status, 'checked_in')
+      )
+    ).limit(1);
+
+    const bookingId = bookingResult.length > 0 ? bookingResult[0].id : null;
+
+    // 3. Create restaurant order attached to room and booking
+    const billAmount = parseFloat(totalAmount) || 0;
+    const newOrder = await db.insert(restaurantOrders).values({
+      hotelId: parseInt(hotelId),
+      roomId: room.id,
+      bookingId: bookingId,
+      tableNumber,
+      items: typeof items === 'string' ? items : JSON.stringify(items),
+      totalAmount: billAmount,
+      status: 'delivered',
+      type: 'room_service'
+    }).returning();
+
+    // 4. Free up the table
+    await db.update(restaurantTables).set({
+      status: 'vacant',
+      activeOrderId: null,
+      currentBillAmount: 0,
+      currentOrderJson: null,
+      notes: null
+    }).where(and(eq(restaurantTables.hotelId, parseInt(hotelId)), eq(restaurantTables.tableNumber, tableNumber)));
+
+    res.json({
+      success: true,
+      message: `Bill of ₹${billAmount} successfully charged to Room ${roomNumber}.`,
+      order: newOrder[0]
+    });
+  } catch (error) {
+    console.error('Charge to room error:', error);
+    res.status(500).json({ error: 'Failed to charge bill to room' });
   }
 });
 
@@ -639,6 +817,227 @@ router.delete('/orders/:id', requireRole(['admin', 'manager']), async (req: Auth
   } catch (error) {
     console.error('Delete restaurant order error:', error);
     res.status(500).json({ error: 'Failed to delete order' });
+  }
+});
+
+// --- TABLE MANAGEMENT (Staff / Admin) ---
+
+// Get all dining tables for current hotel
+router.get('/tables', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    let tables = await db.select().from(restaurantTables)
+      .where(eq(restaurantTables.hotelId, hotelId))
+      .orderBy(restaurantTables.tableNumber);
+
+    // Auto-seed default tables T-01 through T-06 if hotel has no tables yet
+    if (tables.length === 0) {
+      const defaultTables = [
+        { hotelId, tableNumber: 'T-01', capacity: 2, section: 'Main Dining', status: 'vacant' },
+        { hotelId, tableNumber: 'T-02', capacity: 4, section: 'Main Dining', status: 'vacant' },
+        { hotelId, tableNumber: 'T-03', capacity: 4, section: 'Main Dining', status: 'vacant' },
+        { hotelId, tableNumber: 'T-04', capacity: 6, section: 'Main Dining', status: 'vacant' },
+        { hotelId, tableNumber: 'T-05', capacity: 4, section: 'Terrace', status: 'vacant' },
+        { hotelId, tableNumber: 'T-06', capacity: 8, section: 'Terrace', status: 'vacant' },
+      ];
+      await db.insert(restaurantTables).values(defaultTables);
+      tables = await db.select().from(restaurantTables)
+        .where(eq(restaurantTables.hotelId, hotelId))
+        .orderBy(restaurantTables.tableNumber);
+    }
+
+    res.json(tables);
+  } catch (error) {
+    console.error('Fetch tables error:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant tables' });
+  }
+});
+
+// Add a new dining table
+router.post('/tables', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const { tableNumber, capacity, section, notes } = req.body;
+
+    if (!tableNumber) {
+      res.status(400).json({ error: 'Table number is required' });
+      return;
+    }
+
+    // Check duplicate
+    const existing = await db.select().from(restaurantTables)
+      .where(and(eq(restaurantTables.hotelId, hotelId), eq(restaurantTables.tableNumber, tableNumber.trim())))
+      .limit(1);
+
+    if (existing.length > 0) {
+      res.status(400).json({ error: `Table "${tableNumber}" already exists in this hotel` });
+      return;
+    }
+
+    const created = await db.insert(restaurantTables).values({
+      hotelId,
+      tableNumber: tableNumber.trim(),
+      capacity: parseInt(capacity) || 4,
+      section: section || 'Main Dining',
+      notes: notes || null,
+      status: 'vacant'
+    }).returning();
+
+    res.json(created[0]);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create dining table' });
+  }
+});
+
+// Delete table (only if vacant)
+router.delete('/tables/:id', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+
+    const table = await db.select().from(restaurantTables)
+      .where(and(eq(restaurantTables.id, id), eq(restaurantTables.hotelId, hotelId)))
+      .limit(1);
+
+    if (table.length === 0) {
+      res.status(404).json({ error: 'Table not found' });
+      return;
+    }
+
+    if (table[0].status === 'occupied') {
+      res.status(400).json({ error: 'Cannot delete an occupied table. Settle or vacate it first.' });
+      return;
+    }
+
+    await db.delete(restaurantTables).where(eq(restaurantTables.id, id));
+    res.json({ success: true, message: 'Table deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to delete table' });
+  }
+});
+
+// Edit custom bill / items for a table (staff special order or manual adjustments)
+router.patch('/tables/:id/order', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+    const { items, totalAmount, status, notes } = req.body;
+
+    const table = await db.select().from(restaurantTables)
+      .where(and(eq(restaurantTables.id, id), eq(restaurantTables.hotelId, hotelId)))
+      .limit(1);
+
+    if (table.length === 0) {
+      res.status(404).json({ error: 'Table not found' });
+      return;
+    }
+
+    const itemsList = Array.isArray(items) ? items : [];
+    const calculatedTotal = totalAmount !== undefined ? parseFloat(totalAmount) : 
+      itemsList.reduce((acc: number, item: any) => acc + ((parseFloat(item.price) || 0) * (parseInt(item.quantity) || 1)), 0);
+
+    const updated = await db.update(restaurantTables).set({
+      currentOrderJson: JSON.stringify(itemsList),
+      currentBillAmount: calculatedTotal,
+      status: status || (itemsList.length > 0 ? 'occupied' : 'vacant'),
+      notes: notes !== undefined ? notes : table[0].notes
+    }).where(eq(restaurantTables.id, id)).returning();
+
+    res.json(updated[0]);
+  } catch (error) {
+    console.error('Update table order error:', error);
+    res.status(500).json({ error: 'Failed to update table bill' });
+  }
+});
+
+// Settle table bill (Cash/Card/UPI/Charge to Room)
+router.post('/tables/:id/settle', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const id = parseInt(req.params.id);
+    const { paymentMethod, roomNumber, guestPin } = req.body;
+
+    const table = await db.select().from(restaurantTables)
+      .where(and(eq(restaurantTables.id, id), eq(restaurantTables.hotelId, hotelId)))
+      .limit(1);
+
+    if (table.length === 0) {
+      res.status(404).json({ error: 'Table not found' });
+      return;
+    }
+
+    const curTable = table[0];
+    const amount = curTable.currentBillAmount || 0;
+
+    if (paymentMethod === 'charge_to_room') {
+      if (!roomNumber) {
+        res.status(400).json({ error: 'Room number is required to charge to room' });
+        return;
+      }
+
+      const roomResult = await db.select().from(rooms).where(
+        and(eq(rooms.hotelId, hotelId), eq(rooms.number, roomNumber.trim()))
+      ).limit(1);
+
+      if (roomResult.length === 0) {
+        res.status(404).json({ error: `Room ${roomNumber} not found in this hotel` });
+        return;
+      }
+
+      const room = roomResult[0];
+
+      // If guest PIN provided, verify
+      if (guestPin && room.guestPin && room.guestPin.trim() !== guestPin.trim()) {
+        res.status(401).json({ error: 'Guest PIN verification failed' });
+        return;
+      }
+
+      const bookingResult = await db.select().from(bookings).where(
+        and(eq(bookings.hotelId, hotelId), eq(bookings.roomId, room.id), eq(bookings.status, 'checked_in'))
+      ).limit(1);
+
+      const bookingId = bookingResult.length > 0 ? bookingResult[0].id : null;
+
+      // Create restaurantOrder charged to room
+      await db.insert(restaurantOrders).values({
+        hotelId,
+        roomId: room.id,
+        bookingId,
+        tableNumber: curTable.tableNumber,
+        items: curTable.currentOrderJson || '[]',
+        totalAmount: amount,
+        status: 'delivered',
+        type: 'room_service'
+      });
+    } else {
+      // Record regular settled order
+      await db.insert(restaurantOrders).values({
+        hotelId,
+        tableNumber: curTable.tableNumber,
+        items: curTable.currentOrderJson || '[]',
+        totalAmount: amount,
+        status: 'delivered',
+        type: 'dine_in'
+      });
+    }
+
+    // Vacate table
+    const cleared = await db.update(restaurantTables).set({
+      status: 'vacant',
+      activeOrderId: null,
+      currentBillAmount: 0,
+      currentOrderJson: null,
+      notes: null
+    }).where(eq(restaurantTables.id, id)).returning();
+
+    res.json({
+      success: true,
+      message: `Table ${curTable.tableNumber} bill of ₹${amount} settled via ${paymentMethod}.`,
+      table: cleared[0]
+    });
+  } catch (error) {
+    console.error('Settle table error:', error);
+    res.status(500).json({ error: 'Failed to settle table bill' });
   }
 });
 

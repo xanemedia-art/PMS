@@ -8,7 +8,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight, User, Users, Coffee, TrendingUp, Star, Download, ReceiptText, FileText } from 'lucide-react';
+import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight, User, Users, Coffee, TrendingUp, Star, Download, ReceiptText, FileText, CreditCard, DollarSign } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function BookingsPage() {
@@ -229,7 +229,22 @@ export default function BookingsPage() {
     planId: '',
     checkInDate: '',
     checkOutDate: '',
-    agentCommission: ''
+    agentCommission: '',
+    paymentStatus: 'pay_at_checkout', // 'paid' | 'pay_at_checkout' | 'partial'
+    totalEstimatedAmount: '',
+    amountPaid: '',
+    paymentMethod: 'cash',
+    paymentNotes: ''
+  });
+
+  // Settlement dialog state
+  const [paymentModalBooking, setPaymentModalBooking] = useState<any>(null);
+  const [paymentUpdateForm, setPaymentUpdateForm] = useState({
+    paymentStatus: 'paid',
+    amountPaid: '',
+    totalEstimatedAmount: '',
+    paymentMethod: 'cash',
+    paymentNotes: ''
   });
 
   const handleRoomCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -241,6 +256,7 @@ export default function BookingsPage() {
       }
       return { ...prev, roomCount: count.toString(), roomConfigs: newConfigs.slice(0, count) };
     });
+    autoUpdateEstAmount(formData.roomTypeId, count.toString(), formData.checkInDate, formData.checkOutDate);
   };
 
   const uniqueRoomTypes = useMemo(() => {
@@ -270,6 +286,20 @@ export default function BookingsPage() {
     return Object.values(map);
   }, [rooms, myPricing, user]);
 
+  const autoUpdateEstAmount = (rtId: string, countVal: string, inDate: string, outDate: string) => {
+    if (!rtId || !inDate || !outDate) return;
+    const rt = (uniqueRoomTypes as any[]).find((r: any) => r.id.toString() === rtId.toString());
+    if (!rt) return;
+    const nights = Math.max(1, (new Date(outDate).getTime() - new Date(inDate).getTime()) / (1000 * 60 * 60 * 24));
+    const cnt = parseInt(countVal) || 1;
+    const est = (rt.price * cnt * nights).toString();
+    setFormData(prev => ({
+      ...prev,
+      totalEstimatedAmount: est,
+      amountPaid: prev.paymentStatus === 'paid' ? est : prev.amountPaid
+    }));
+  };
+
   // Mutations
   const createBookingMutation = useMutation({
     mutationFn: async (data: any) => {
@@ -292,8 +322,33 @@ export default function BookingsPage() {
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
       setIsDialogOpen(false);
       setFormData({
-        guestName: '', guestEmail: '', guestPhone: '', roomTypeId: '', roomCount: '1', roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }], planId: '', checkInDate: '', checkOutDate: '', agentCommission: ''
+        guestName: '', guestEmail: '', guestPhone: '', roomTypeId: '', roomCount: '1', roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }], planId: '', checkInDate: '', checkOutDate: '', agentCommission: '', paymentStatus: 'pay_at_checkout', totalEstimatedAmount: '', amountPaid: '', paymentMethod: 'cash', paymentNotes: ''
       });
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  const updatePaymentMutation = useMutation({
+    mutationFn: async ({ bookingId, data }: any) => {
+      const res = await fetch(`/api/bookings/${bookingId}/payment`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to update payment');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
+      setPaymentModalBooking(null);
+      alert('Payment details updated successfully!');
     },
     onError: (err: any) => alert(err.message)
   });
@@ -535,11 +590,19 @@ export default function BookingsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-1.5">
                       <Label htmlFor="checkIn" className="text-xs font-bold uppercase tracking-wider text-slate-400">Check-In</Label>
-                      <Input id="checkIn" type="date" value={formData.checkInDate} onChange={(e) => setFormData({ ...formData, checkInDate: e.target.value })} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
+                      <Input id="checkIn" type="date" value={formData.checkInDate} onChange={(e) => {
+                        const inDate = e.target.value;
+                        setFormData(prev => ({ ...prev, checkInDate: inDate }));
+                        autoUpdateEstAmount(formData.roomTypeId, formData.roomCount, inDate, formData.checkOutDate);
+                      }} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="checkOut" className="text-xs font-bold uppercase tracking-wider text-slate-400">Check-Out</Label>
-                      <Input id="checkOut" type="date" value={formData.checkOutDate} onChange={(e) => setFormData({ ...formData, checkOutDate: e.target.value })} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
+                      <Input id="checkOut" type="date" value={formData.checkOutDate} onChange={(e) => {
+                        const outDate = e.target.value;
+                        setFormData(prev => ({ ...prev, checkOutDate: outDate }));
+                        autoUpdateEstAmount(formData.roomTypeId, formData.roomCount, formData.checkInDate, outDate);
+                      }} required className="bg-slate-50 border-none focus-visible:ring-blue-500" />
                     </div>
                   </div>
                 </div>
@@ -553,7 +616,11 @@ export default function BookingsPage() {
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div className="sm:col-span-1 space-y-1.5">
                       <Label htmlFor="roomTypeId" className="text-xs font-bold uppercase tracking-wider text-slate-400">Category</Label>
-                      <select id="roomTypeId" value={formData.roomTypeId} onChange={(e) => setFormData({ ...formData, roomTypeId: e.target.value })} required className="flex h-10 w-full rounded-md border-none bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+                      <select id="roomTypeId" value={formData.roomTypeId} onChange={(e) => {
+                        const typeId = e.target.value;
+                        setFormData(prev => ({ ...prev, roomTypeId: typeId }));
+                        autoUpdateEstAmount(typeId, formData.roomCount, formData.checkInDate, formData.checkOutDate);
+                      }} required className="flex h-10 w-full rounded-md border-none bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
                         <option value="" disabled>Select Type</option>
                         {uniqueRoomTypes.map((type: any) => (
                           <option key={type.id} value={type.id}>
@@ -572,6 +639,108 @@ export default function BookingsPage() {
                         <option value="">Standard</option>
                         {plans.map((plan: any) => <option key={plan.id} value={plan.id}>{plan.name}</option>)}
                       </select>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Section: Payment Settlement */}
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+                    <CreditCard className="w-5 h-5 text-emerald-500" />
+                    <h3 className="font-bold text-slate-800">Payment Status & Settlement</h3>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="paymentStatus" className="text-xs font-bold uppercase tracking-wider text-slate-400">Payment Status</Label>
+                      <select
+                        id="paymentStatus"
+                        value={formData.paymentStatus}
+                        onChange={(e) => {
+                          const newStatus = e.target.value;
+                          let newAmount = formData.amountPaid;
+                          if (newStatus === 'paid') newAmount = formData.totalEstimatedAmount;
+                          if (newStatus === 'pay_at_checkout') newAmount = '0';
+                          setFormData({ ...formData, paymentStatus: newStatus, amountPaid: newAmount });
+                        }}
+                        className="flex h-10 w-full rounded-md border-none bg-slate-50 px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                      >
+                        <option value="pay_at_checkout">Pay at Checkout (Pending)</option>
+                        <option value="paid">Payment Received (Full)</option>
+                        <option value="partial">Advance / Custom Amount Paid</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="totalEst" className="text-xs font-bold uppercase tracking-wider text-slate-400">Total Booking Amount (₹)</Label>
+                      <Input
+                        id="totalEst"
+                        type="number"
+                        placeholder="e.g. 5000"
+                        value={formData.totalEstimatedAmount}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setFormData(prev => ({
+                            ...prev,
+                            totalEstimatedAmount: val,
+                            amountPaid: prev.paymentStatus === 'paid' ? val : prev.amountPaid
+                          }));
+                        }}
+                        className="bg-slate-50 border-none font-bold text-slate-900 focus-visible:ring-emerald-500"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="amountPaid" className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                        {formData.paymentStatus === 'partial' ? 'Custom Advance Received (₹)' : 'Amount Collected (₹)'}
+                      </Label>
+                      <Input
+                        id="amountPaid"
+                        type="number"
+                        disabled={formData.paymentStatus === 'pay_at_checkout'}
+                        placeholder={formData.paymentStatus === 'pay_at_checkout' ? '₹0 (At Checkout)' : 'e.g. 2500'}
+                        value={formData.amountPaid}
+                        onChange={(e) => setFormData({ ...formData, amountPaid: e.target.value })}
+                        className="bg-slate-50 border-none font-bold text-emerald-600 focus-visible:ring-emerald-500 disabled:opacity-50"
+                      />
+                    </div>
+                  </div>
+
+                  {formData.paymentStatus === 'partial' && (
+                    <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between text-xs">
+                      <span className="font-semibold text-amber-800">Remaining Balance Due at Checkout:</span>
+                      <span className="font-bold text-amber-900 text-sm font-mono">
+                        ₹{Math.max(0, (parseFloat(formData.totalEstimatedAmount) || 0) - (parseFloat(formData.amountPaid) || 0)).toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="paymentMethod" className="text-xs font-bold uppercase tracking-wider text-slate-400">Payment Mode</Label>
+                      <select
+                        id="paymentMethod"
+                        value={formData.paymentMethod}
+                        onChange={(e) => setFormData({ ...formData, paymentMethod: e.target.value })}
+                        className="flex h-10 w-full rounded-md border-none bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                      >
+                        <option value="cash">Cash</option>
+                        <option value="upi">UPI / QR Code</option>
+                        <option value="card">Credit / Debit Card</option>
+                        <option value="bank_transfer">Bank Transfer / NEFT</option>
+                        <option value="other">Other / Pay at Checkout</option>
+                      </select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="paymentNotes" className="text-xs font-bold uppercase tracking-wider text-slate-400">Payment Reference / Notes</Label>
+                      <Input
+                        id="paymentNotes"
+                        placeholder="e.g. UPI Ref #402919 or 50% advance token"
+                        value={formData.paymentNotes}
+                        onChange={(e) => setFormData({ ...formData, paymentNotes: e.target.value })}
+                        className="bg-slate-50 border-none focus-visible:ring-emerald-500"
+                      />
                     </div>
                   </div>
                 </div>
@@ -799,6 +968,7 @@ export default function BookingsPage() {
                     <TableHead>Check In</TableHead>
                     <TableHead>Check Out</TableHead>
                     <TableHead>Status</TableHead>
+                    <TableHead>Payment</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -836,7 +1006,67 @@ export default function BookingsPage() {
                             {booking.status.replace('_', ' ')}
                           </Badge>
                         </TableCell>
+                        <TableCell onClick={(e) => e.stopPropagation()}>
+                          {booking.paymentStatus === 'paid' ? (
+                            <Badge className="bg-emerald-100 text-emerald-800 border-none font-bold text-[11px]">
+                              Paid {booking.amountPaid ? `(₹${Number(booking.amountPaid).toLocaleString('en-IN')})` : ''}
+                            </Badge>
+                          ) : booking.paymentStatus === 'partial' ? (
+                            <Badge 
+                              className="bg-amber-100 text-amber-800 border-none font-bold text-[11px] cursor-pointer hover:bg-amber-200"
+                              onClick={() => {
+                                setPaymentModalBooking(booking);
+                                setPaymentUpdateForm({
+                                  paymentStatus: 'paid',
+                                  amountPaid: (booking.totalEstimatedAmount || booking.amountPaid || 0).toString(),
+                                  totalEstimatedAmount: (booking.totalEstimatedAmount || '').toString(),
+                                  paymentMethod: booking.paymentMethod || 'cash',
+                                  paymentNotes: booking.paymentNotes || ''
+                                });
+                              }}
+                            >
+                              Advance: ₹{Number(booking.amountPaid || 0).toLocaleString('en-IN')} / ₹{Number(booking.totalEstimatedAmount || 0).toLocaleString('en-IN')}
+                            </Badge>
+                          ) : (
+                            <Badge 
+                              className="bg-slate-100 text-slate-700 border-none font-bold text-[11px] cursor-pointer hover:bg-slate-200"
+                              onClick={() => {
+                                setPaymentModalBooking(booking);
+                                setPaymentUpdateForm({
+                                  paymentStatus: 'paid',
+                                  amountPaid: (booking.totalEstimatedAmount || '').toString(),
+                                  totalEstimatedAmount: (booking.totalEstimatedAmount || '').toString(),
+                                  paymentMethod: 'cash',
+                                  paymentNotes: ''
+                                });
+                              }}
+                            >
+                              Pay at Checkout
+                            </Badge>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right space-x-2" onClick={(e) => e.stopPropagation()}>
+                          {user?.role !== 'agent' && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="text-xs font-semibold text-emerald-700 hover:bg-emerald-50 h-8 px-2"
+                              title="Update Payment Details"
+                              onClick={() => {
+                                setPaymentModalBooking(booking);
+                                setPaymentUpdateForm({
+                                  paymentStatus: booking.paymentStatus || 'pay_at_checkout',
+                                  amountPaid: (booking.amountPaid !== undefined && booking.amountPaid !== null ? booking.amountPaid : '').toString(),
+                                  totalEstimatedAmount: (booking.totalEstimatedAmount || '').toString(),
+                                  paymentMethod: booking.paymentMethod || 'cash',
+                                  paymentNotes: booking.paymentNotes || ''
+                                });
+                              }}
+                            >
+                              <CreditCard className="w-3.5 h-3.5 mr-1" />
+                              Pay
+                            </Button>
+                          )}
                           {booking.status === 'confirmed' && user?.role !== 'agent' && (
                             <Button 
                               variant="outline" 
@@ -885,6 +1115,119 @@ export default function BookingsPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Quick Payment Settlement Dialog */}
+          <Dialog open={!!paymentModalBooking} onOpenChange={(open) => !open && setPaymentModalBooking(null)}>
+            <DialogContent className="sm:max-w-[480px]">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2 text-xl font-bold">
+                  <CreditCard className="w-5 h-5 text-emerald-600" />
+                  Payment Settlement: {paymentModalBooking?.guestName}
+                </DialogTitle>
+                <DialogDescription>
+                  Update collection status, record advance payments, or mark as settled.
+                </DialogDescription>
+              </DialogHeader>
+
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (!paymentModalBooking) return;
+                updatePaymentMutation.mutate({
+                  bookingId: paymentModalBooking.id,
+                  data: {
+                    paymentStatus: paymentUpdateForm.paymentStatus,
+                    totalEstimatedAmount: paymentUpdateForm.totalEstimatedAmount ? parseFloat(paymentUpdateForm.totalEstimatedAmount) : undefined,
+                    amountPaid: paymentUpdateForm.amountPaid ? parseFloat(paymentUpdateForm.amountPaid) : 0,
+                    paymentMethod: paymentUpdateForm.paymentMethod,
+                    paymentNotes: paymentUpdateForm.paymentNotes
+                  }
+                });
+              }} className="space-y-4 py-2">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Payment Status</Label>
+                  <select
+                    value={paymentUpdateForm.paymentStatus}
+                    onChange={(e) => {
+                      const st = e.target.value;
+                      let paid = paymentUpdateForm.amountPaid;
+                      if (st === 'paid') paid = paymentUpdateForm.totalEstimatedAmount;
+                      if (st === 'pay_at_checkout') paid = '0';
+                      setPaymentUpdateForm({ ...paymentUpdateForm, paymentStatus: st, amountPaid: paid });
+                    }}
+                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="paid">Payment Received (Full)</option>
+                    <option value="partial">Advance / Partial Paid</option>
+                    <option value="pay_at_checkout">Pay at Checkout (Pending)</option>
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Total Bill Amount (₹)</Label>
+                    <Input
+                      type="number"
+                      value={paymentUpdateForm.totalEstimatedAmount}
+                      onChange={(e) => setPaymentUpdateForm({ ...paymentUpdateForm, totalEstimatedAmount: e.target.value })}
+                      className="font-bold"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Amount Paid (₹)</Label>
+                    <Input
+                      type="number"
+                      value={paymentUpdateForm.amountPaid}
+                      onChange={(e) => setPaymentUpdateForm({ ...paymentUpdateForm, amountPaid: e.target.value })}
+                      className="font-bold text-emerald-600"
+                      required
+                    />
+                  </div>
+                </div>
+
+                {paymentUpdateForm.paymentStatus === 'partial' && (
+                  <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 flex items-center justify-between text-xs">
+                    <span className="font-semibold text-amber-800">Remaining Due:</span>
+                    <span className="font-bold text-amber-900 font-mono text-sm">
+                      ₹{Math.max(0, (parseFloat(paymentUpdateForm.totalEstimatedAmount) || 0) - (parseFloat(paymentUpdateForm.amountPaid) || 0)).toLocaleString('en-IN')}
+                    </span>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Payment Mode</Label>
+                  <select
+                    value={paymentUpdateForm.paymentMethod}
+                    onChange={(e) => setPaymentUpdateForm({ ...paymentUpdateForm, paymentMethod: e.target.value })}
+                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="upi">UPI / QR Code</option>
+                    <option value="card">Credit / Debit Card</option>
+                    <option value="bank_transfer">Bank Transfer / NEFT</option>
+                    <option value="other">Other</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold uppercase tracking-wider text-slate-500">Notes / Reference</Label>
+                  <Input
+                    placeholder="e.g. Cleared at front desk via UPI"
+                    value={paymentUpdateForm.paymentNotes}
+                    onChange={(e) => setPaymentUpdateForm({ ...paymentUpdateForm, paymentNotes: e.target.value })}
+                  />
+                </div>
+
+                <DialogFooter className="pt-3">
+                  <Button type="button" variant="outline" onClick={() => setPaymentModalBooking(null)}>Cancel</Button>
+                  <Button type="submit" disabled={updatePaymentMutation.isPending} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold">
+                    {updatePaymentMutation.isPending ? 'Saving...' : 'Update Payment'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
 
           {/* Booking Details Dialog */}
           <Dialog open={!!selectedBooking} onOpenChange={(open) => !open && setSelectedBooking(null)}>
@@ -951,6 +1294,43 @@ export default function BookingsPage() {
                     <div>
                       <h4 className="text-sm font-semibold text-slate-500">Booked By</h4>
                       <p className="text-base font-medium capitalize">{selectedBooking.bookedBy?.name || 'Unknown'} ({selectedBooking.bookedBy?.role || 'staff'})</p>
+                    </div>
+                    <div className="col-span-2 bg-emerald-50/60 p-4 rounded-xl border border-emerald-100 flex items-center justify-between mt-2">
+                      <div>
+                        <h4 className="text-xs font-black uppercase text-emerald-700 tracking-wider">Payment & Settlement</h4>
+                        <div className="flex items-center gap-2 mt-1">
+                          <Badge className="bg-emerald-200 text-emerald-900 border-none font-bold text-xs uppercase">
+                            {selectedBooking.paymentStatus ? selectedBooking.paymentStatus.replace('_', ' ') : 'Pay at checkout'}
+                          </Badge>
+                          <span className="text-xs text-slate-600">
+                            Paid: <strong>₹{Number(selectedBooking.amountPaid || 0).toLocaleString('en-IN')}</strong> / ₹{Number(selectedBooking.totalEstimatedAmount || 0).toLocaleString('en-IN')}
+                          </span>
+                        </div>
+                        {selectedBooking.totalEstimatedAmount && (selectedBooking.totalEstimatedAmount - (selectedBooking.amountPaid || 0) > 0) && (
+                          <p className="text-xs font-bold text-amber-700 mt-1">
+                            Pending Due: ₹{Number(selectedBooking.totalEstimatedAmount - (selectedBooking.amountPaid || 0)).toLocaleString('en-IN')}
+                          </p>
+                        )}
+                      </div>
+                      {user?.role !== 'agent' && (
+                        <Button
+                          size="sm"
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                          onClick={() => {
+                            setPaymentModalBooking(selectedBooking);
+                            setPaymentUpdateForm({
+                              paymentStatus: selectedBooking.paymentStatus || 'pay_at_checkout',
+                              amountPaid: (selectedBooking.amountPaid !== undefined && selectedBooking.amountPaid !== null ? selectedBooking.amountPaid : '').toString(),
+                              totalEstimatedAmount: (selectedBooking.totalEstimatedAmount || '').toString(),
+                              paymentMethod: selectedBooking.paymentMethod || 'cash',
+                              paymentNotes: selectedBooking.paymentNotes || ''
+                            });
+                          }}
+                        >
+                          <CreditCard className="w-3.5 h-3.5 mr-1" />
+                          Settle Payment
+                        </Button>
+                      )}
                     </div>
                     {selectedBooking.status === 'checked_in' && (
                       <div className="col-span-2 bg-blue-50/70 p-4 rounded-xl border border-blue-100 flex items-center justify-between mt-2 animate-in fade-in duration-300">

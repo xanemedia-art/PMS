@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X, Coffee, MessageSquare, Lock, CreditCard, Bell } from 'lucide-react';
+import { LayoutDashboard, CalendarDays, BedDouble, ClipboardList, UserRoundCog, Users, BarChart3, Settings, LogOut, Wallet, Menu, X, Coffee, MessageSquare, Lock, CreditCard, Bell, UserCheck } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
 function NotificationBell({ token }: { token: string }) {
@@ -217,7 +217,7 @@ export default function AppLayout() {
                   subscriptionStatus: 'expired',
                   subscriptionEndsAt: null,
                   subscriptionDues: data.dues !== undefined && data.dues !== null ? data.dues : 6000.0,
-                  razorpayKeyId: 'rzp_live_SufeFLg6s8EJfH',
+                  razorpayKeyId: (import.meta as any).env?.VITE_RAZORPAY_KEY_ID || '',
                   name: user.name
                 });
                 setLoadingSub(false);
@@ -279,7 +279,7 @@ export default function AppLayout() {
 
       // 3. Configure Razorpay options
       const options = {
-        key: subscription?.razorpayKeyId || 'rzp_live_SufeFLg6s8EJfH',
+        key: subscription?.razorpayKeyId || (import.meta as any).env?.VITE_RAZORPAY_KEY_ID || '',
         amount: orderData.amount,
         currency: orderData.currency,
         name: 'Xane PMS',
@@ -367,6 +367,7 @@ export default function AppLayout() {
     { name: 'Guest Requests', path: '/guest-requests', icon: MessageSquare, roles: ['admin', 'manager', 'staff'], feature: 'housekeeping' },
     { name: 'Housekeeping', path: '/housekeeping', icon: UserRoundCog, roles: ['admin', 'manager', 'staff'], feature: 'housekeeping' },
     { name: 'Agents', path: '/agents', icon: Users, roles: ['admin', 'manager'], feature: 'agents' },
+    { name: 'Staff & Payroll', path: '/staff', icon: UserCheck, roles: ['admin', 'manager'], feature: 'bookings' },
     { name: 'Expenses', path: '/expenses', icon: Wallet, roles: ['admin', 'manager', 'staff'], feature: 'expenses' },
     { name: 'Billing', path: '/billing', icon: CreditCard, roles: ['admin', 'manager', 'staff'], feature: 'bookings' },
     { name: 'Reports', path: '/reports', icon: BarChart3, roles: ['admin', 'manager'], feature: 'bookings' },

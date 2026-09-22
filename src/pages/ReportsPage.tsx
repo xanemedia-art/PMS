@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { BarChart3, TrendingUp, Users, Calendar, AlertCircle, Download, FileText } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { BarChart3, TrendingUp, Users, Calendar, AlertCircle, Download, FileText, ChevronDown, ChevronUp, Layers, ArrowUpRight, ArrowDownRight, Wallet } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Bar, BarChart, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { useQuery } from '@tanstack/react-query';
@@ -26,6 +27,8 @@ interface ReportData {
 
 export default function ReportsPage() {
   const { token } = useAuth();
+  const [selectedExpenseMonth, setSelectedExpenseMonth] = useState<string>('');
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
 
   // 1. Fetch general report dashboard data
   const { data, isLoading, error, refetch } = useQuery<ReportData>({
@@ -74,6 +77,22 @@ export default function ReportsPage() {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Failed to fetch financials report');
+      return res.json();
+    },
+    staleTime: 30000,
+  });
+
+  // 5. Fetch category-wise expenses report (exact previous month figures & breakdown)
+  const { data: categoryExpensesData = null, isLoading: categoryExpensesLoading } = useQuery({
+    queryKey: ['categoryExpenses', selectedExpenseMonth],
+    queryFn: async () => {
+      const url = selectedExpenseMonth 
+        ? `/api/reports/expenses-by-category?month=${selectedExpenseMonth}` 
+        : '/api/reports/expenses-by-category';
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch category expenses report');
       return res.json();
     },
     staleTime: 30000,
@@ -489,6 +508,228 @@ export default function ReportsPage() {
                     </div>
                   </CardContent>
                 </Card>
+              </div>
+
+              {/* ── CATEGORY-WISE EXPENSES SECTION (PREVIOUS MONTH DATA) ── */}
+              <div className="pt-6 border-t border-slate-200 space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Wallet className="w-5 h-5 text-rose-500" />
+                      <h3 className="text-lg font-bold text-slate-900">Category-Wise Expenses</h3>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Exact cost breakdown by operational category with previous month comparison.
+                    </p>
+                  </div>
+
+                  {/* Month Selector */}
+                  {categoryExpensesData && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-500">Period:</span>
+                      <select 
+                        value={selectedExpenseMonth || categoryExpensesData.targetMonth}
+                        onChange={(e) => setSelectedExpenseMonth(e.target.value)}
+                        className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 shadow-sm outline-none focus:ring-2 focus:ring-slate-900"
+                      >
+                        {categoryExpensesData.availableMonths.map((m: string) => {
+                          const [y, mo] = m.split('-').map(Number);
+                          const label = new Date(y, mo - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                          return (
+                            <option key={m} value={m}>
+                              {label} {m === categoryExpensesData.defaultMonth ? '(Default)' : ''}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    </div>
+                  )}
+                </div>
+
+                {categoryExpensesLoading ? (
+                  <div className="h-40 flex items-center justify-center text-slate-400 italic text-sm">
+                    Loading category expenses...
+                  </div>
+                ) : categoryExpensesData ? (
+                  <div className="space-y-6">
+                    {/* Summary Comparison Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <Card className="border-slate-200 shadow-sm bg-white">
+                        <CardContent className="p-5">
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                            {categoryExpensesData.targetMonthLabel} Expenses
+                          </p>
+                          <p className="text-2xl font-black text-rose-600 mt-1">
+                            ₹{categoryExpensesData.targetTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </p>
+                          <p className="text-[11px] text-slate-500 mt-1">
+                            Across {categoryExpensesData.categories.reduce((acc: number, c: any) => acc + c.count, 0)} expense vouchers
+                          </p>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="border-slate-200 shadow-sm bg-slate-50/50">
+                        <CardContent className="p-5">
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                            Previous Month ({categoryExpensesData.priorMonthLabel})
+                          </p>
+                          <p className="text-2xl font-black text-slate-800 mt-1">
+                            ₹{categoryExpensesData.priorTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </p>
+                          <div className="flex items-center gap-1.5 mt-1">
+                            {categoryExpensesData.overallPercentChange !== null ? (
+                              categoryExpensesData.overallChange >= 0 ? (
+                                <span className="text-xs font-bold text-rose-600 flex items-center">
+                                  <ArrowUpRight className="w-3.5 h-3.5" /> +₹{categoryExpensesData.overallChange.toLocaleString()} (+{categoryExpensesData.overallPercentChange}%)
+                                </span>
+                              ) : (
+                                <span className="text-xs font-bold text-emerald-600 flex items-center">
+                                  <ArrowDownRight className="w-3.5 h-3.5" /> -₹{Math.abs(categoryExpensesData.overallChange).toLocaleString()} ({categoryExpensesData.overallPercentChange}%)
+                                </span>
+                              )
+                            ) : (
+                              <span className="text-xs text-slate-400">No prior records</span>
+                            )}
+                          </div>
+                        </CardContent>
+                      </Card>
+
+                      <Card className="border-slate-200 shadow-sm bg-white">
+                        <CardContent className="p-5">
+                          <p className="text-xs font-bold text-slate-400 uppercase tracking-wider">Top Expense Driver</p>
+                          <p className="text-xl font-bold text-slate-900 mt-1 capitalize truncate">
+                            {categoryExpensesData.categories[0]?.category || 'None'}
+                          </p>
+                          <p className="text-[11px] text-slate-500 mt-1">
+                            {categoryExpensesData.categories[0] 
+                              ? `₹${categoryExpensesData.categories[0].totalAmount.toLocaleString()} (${categoryExpensesData.categories[0].percentage}% of total spend)`
+                              : 'No recorded expenses'}
+                          </p>
+                        </CardContent>
+                      </Card>
+                    </div>
+
+                    {/* Category Breakdown Table with Expandable Items */}
+                    <Card className="border border-slate-200 shadow-sm overflow-hidden">
+                      <CardHeader className="py-4 px-6 border-b border-slate-100 bg-slate-50">
+                        <div className="flex justify-between items-center">
+                          <CardTitle className="text-sm font-bold text-slate-800 uppercase tracking-wider">
+                            Category Cost Breakdown & Audit
+                          </CardTitle>
+                          <Badge variant="outline" className="text-xs font-bold font-mono">
+                            {categoryExpensesData.categories.length} Categories
+                          </Badge>
+                        </div>
+                      </CardHeader>
+
+                      <CardContent className="p-0">
+                        {categoryExpensesData.categories.length === 0 ? (
+                          <div className="p-8 text-center text-slate-400 italic text-sm">
+                            No expenses recorded for {categoryExpensesData.targetMonthLabel}.
+                          </div>
+                        ) : (
+                          <div className="divide-y divide-slate-100">
+                            {categoryExpensesData.categories.map((cat: any) => {
+                              const isExpanded = expandedCategory === cat.category;
+                              return (
+                                <div key={cat.category} className="transition-colors hover:bg-slate-50/50">
+                                  <div 
+                                    className="p-4 sm:px-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer"
+                                    onClick={() => setExpandedCategory(isExpanded ? null : cat.category)}
+                                  >
+                                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                                      <div className="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center font-bold text-xs shrink-0">
+                                        {cat.category.charAt(0).toUpperCase()}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <p className="text-sm font-bold text-slate-900 capitalize truncate">{cat.category}</p>
+                                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600">
+                                            {cat.count} {cat.count === 1 ? 'entry' : 'entries'}
+                                          </span>
+                                        </div>
+                                        {/* Progress bar */}
+                                        <div className="w-full bg-slate-100 h-1.5 rounded-full mt-2 overflow-hidden">
+                                          <div 
+                                            className="bg-rose-500 h-full rounded-full transition-all duration-500" 
+                                            style={{ width: `${Math.min(100, cat.percentage)}%` }} 
+                                          />
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="flex items-center justify-between sm:justify-end gap-6 shrink-0">
+                                      <div className="text-right">
+                                        <p className="text-sm font-extrabold text-slate-900">
+                                          ₹{cat.totalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                        </p>
+                                        <p className="text-[10px] text-slate-400 font-bold uppercase">
+                                          {cat.percentage}% of month total
+                                        </p>
+                                      </div>
+
+                                      <div className="text-right hidden sm:block">
+                                        <p className="text-xs font-semibold text-slate-500">
+                                          Prior: ₹{cat.priorAmount.toLocaleString()}
+                                        </p>
+                                        {cat.percentChange !== null ? (
+                                          <p className={`text-[10px] font-bold ${cat.percentChange >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                            {cat.percentChange >= 0 ? `+${cat.percentChange}%` : `${cat.percentChange}%`}
+                                          </p>
+                                        ) : (
+                                          <p className="text-[10px] text-slate-400">New</p>
+                                        )}
+                                      </div>
+
+                                      <div className="text-slate-400 hover:text-slate-600">
+                                        {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  {/* Expandable Itemized Vouchers Drawer */}
+                                  {isExpanded && (
+                                    <div className="px-6 pb-4 pt-1 bg-slate-50/80 border-t border-slate-100 animate-in fade-in duration-200">
+                                      <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider mb-2">
+                                        Itemized Expenses in {cat.category}:
+                                      </p>
+                                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-xs">
+                                        <Table>
+                                          <TableHeader>
+                                            <TableRow className="hover:bg-transparent text-[11px]">
+                                              <TableHead className="py-2 pl-4">Expense Title</TableHead>
+                                              <TableHead className="py-2">Description</TableHead>
+                                              <TableHead className="py-2">Date</TableHead>
+                                              <TableHead className="py-2 text-right pr-4">Amount</TableHead>
+                                            </TableRow>
+                                          </TableHeader>
+                                          <TableBody>
+                                            {cat.items.map((item: any) => (
+                                              <TableRow key={item.id} className="text-xs">
+                                                <TableCell className="pl-4 font-bold text-slate-800">{item.name}</TableCell>
+                                                <TableCell className="text-slate-500">{item.description || '-'}</TableCell>
+                                                <TableCell className="text-slate-400">
+                                                  {new Date(item.createdAt).toLocaleDateString()}
+                                                </TableCell>
+                                                <TableCell className="text-right pr-4 font-bold text-rose-600 font-mono">
+                                                  ₹{Number(item.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+                                          </TableBody>
+                                        </Table>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                ) : null}
               </div>
             </div>
           ) : (

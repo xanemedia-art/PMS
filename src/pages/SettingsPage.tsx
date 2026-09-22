@@ -8,7 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { User, Hotel, Database, Users, Trash2, Plus, Save, Key, AlertCircle, CreditCard, CheckCircle2 } from 'lucide-react';
+import { User, Hotel, Database, Users, Trash2, Plus, Save, Key, AlertCircle, CreditCard, CheckCircle2, Receipt, Building2, ShieldCheck, Percent } from 'lucide-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function SettingsPage() {
@@ -37,6 +37,17 @@ export default function SettingsPage() {
   // Team State
   const [isTeamDialogOpen, setIsTeamDialogOpen] = useState(false);
   const [newTeamMember, setNewTeamMember] = useState({ name: '', email: '', password: '', role: 'staff' });
+
+  // GST Settings State
+  const [gstFormData, setGstFormData] = useState({
+    gstin: '',
+    billingStateName: '',
+    billingStateCode: '',
+    roomGstRate: '12.0',
+    foodGstRate: '5.0',
+    roomSacCode: '996311',
+    foodSacCode: '99633'
+  });
 
   // Dialog States for Inventory
   const [isRoomTypeDialogOpen, setIsRoomTypeDialogOpen] = useState(false);
@@ -216,6 +227,15 @@ export default function SettingsPage() {
     enabled: user?.role === 'admin',
   });
 
+  const { data: currentHotel, isLoading: currentHotelLoading } = useQuery({
+    queryKey: ['currentHotelSettings'],
+    queryFn: async () => {
+      const res = await fetch('/api/settings/hotel', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return null;
+      return res.json();
+    }
+  });
+
   const { data: subscriptionData, refetch: refetchSubscription, isLoading: subscriptionLoading } = useQuery({
     queryKey: ['subscriptionStatus'],
     queryFn: async () => {
@@ -223,6 +243,39 @@ export default function SettingsPage() {
       if (!res.ok) throw new Error('Failed to fetch subscription status');
       return res.json();
     },
+  });
+
+  // Sync current hotel GST into gstFormData
+  React.useEffect(() => {
+    if (currentHotel) {
+      setGstFormData({
+        gstin: currentHotel.gstin || '',
+        billingStateName: currentHotel.billingStateName || '',
+        billingStateCode: currentHotel.billingStateCode || '',
+        roomGstRate: (currentHotel.roomGstRate ?? 12.0).toString(),
+        foodGstRate: (currentHotel.foodGstRate ?? 5.0).toString(),
+        roomSacCode: currentHotel.roomSacCode || '996311',
+        foodSacCode: currentHotel.foodSacCode || '99633'
+      });
+    }
+  }, [currentHotel]);
+
+  const updateGstMutation = useMutation({
+    mutationFn: async (data: any) => {
+      const res = await fetch('/api/settings/hotel', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(data)
+      });
+      if (!res.ok) throw new Error('Failed to update GST settings');
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['currentHotelSettings'] });
+      queryClient.invalidateQueries({ queryKey: ['hotels'] });
+      alert('GST & Tax settings updated successfully!');
+    },
+    onError: (err: any) => alert(err.message)
   });
 
   // Dynamic Razorpay checkout script loading on component mount
@@ -261,7 +314,7 @@ export default function SettingsPage() {
       const orderData = await res.json();
 
       const options = {
-        key: subscriptionData?.razorpayKeyId || 'rzp_live_SufeFLg6s8EJfH',
+        key: subscriptionData?.razorpayKeyId || (import.meta as any).env?.VITE_RAZORPAY_KEY_ID || '',
         amount: orderData.amount, // already in paise
         currency: orderData.currency,
         name: 'PMS Subscription',
@@ -565,6 +618,7 @@ export default function SettingsPage() {
               {!isExpired && (
                 <>
                   <TabsTrigger value="hotel" className="gap-2"><Hotel className="w-4 h-4" /> Properties</TabsTrigger>
+                  <TabsTrigger value="gst" className="gap-2"><Receipt className="w-4 h-4" /> GST Configuration</TabsTrigger>
                   <TabsTrigger value="inventory" className="gap-2"><Database className="w-4 h-4" /> Inventory</TabsTrigger>
                 </>
               )}
@@ -716,6 +770,260 @@ export default function SettingsPage() {
                         </TableCell>
                       </TableRow>
                     ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* GST CONFIGURATION TAB */}
+        <TabsContent value="gst" className="space-y-6 animate-in fade-in duration-300">
+          <Card className="border-slate-200 shadow-sm overflow-hidden bg-white">
+            <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-4">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                <div>
+                  <CardTitle className="text-xl flex items-center gap-2 text-slate-900">
+                    <Receipt className="w-5 h-5 text-amber-600" />
+                    GST & Statutory Tax Configuration
+                  </CardTitle>
+                  <CardDescription className="mt-1">
+                    Manage GSTIN, state jurisdiction, room tariff tax slabs, restaurant food tax, and SAC codes for <strong>{currentHotel?.name || 'Active Hotel'}</strong>.
+                  </CardDescription>
+                </div>
+                <Badge className="bg-amber-100 text-amber-800 border-none font-bold text-xs py-1 px-2.5">
+                  {currentHotel?.name || 'Active Property'}
+                </Badge>
+              </div>
+            </CardHeader>
+
+            <CardContent className="pt-6 space-y-6">
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                updateGstMutation.mutate(gstFormData);
+              }} className="space-y-6">
+
+                {/* Statutory Registration Details */}
+                <div className="space-y-4">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-500 border-b pb-2">
+                    Statutory Registration & State Jurisdiction
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="space-y-1.5 sm:col-span-1">
+                      <Label htmlFor="hotelGstin" className="text-xs font-bold text-slate-700">GSTIN Number *</Label>
+                      <Input
+                        id="hotelGstin"
+                        placeholder="e.g. 27AAAAA1111A1Z1"
+                        value={gstFormData.gstin}
+                        onChange={(e) => setGstFormData({ ...gstFormData, gstin: e.target.value.toUpperCase() })}
+                        className="font-mono text-xs uppercase"
+                        maxLength={15}
+                      />
+                      <span className="text-[10px] text-slate-400">15-digit statutory GST identifier</span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="hotelStateName" className="text-xs font-bold text-slate-700">Billing State Name</Label>
+                      <Input
+                        id="hotelStateName"
+                        placeholder="e.g. Maharashtra"
+                        value={gstFormData.billingStateName}
+                        onChange={(e) => setGstFormData({ ...gstFormData, billingStateName: e.target.value })}
+                        className="text-xs"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="hotelStateCode" className="text-xs font-bold text-slate-700">State Code (2-Digit)</Label>
+                      <Input
+                        id="hotelStateCode"
+                        placeholder="e.g. 27"
+                        value={gstFormData.billingStateCode}
+                        onChange={(e) => setGstFormData({ ...gstFormData, billingStateCode: e.target.value })}
+                        className="font-mono text-xs"
+                        maxLength={2}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Tax Slabs & Rates */}
+                <div className="space-y-4">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-500 border-b pb-2">
+                    GST Tax Slabs & Statutory Rates
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="p-4 bg-slate-50 border rounded-xl space-y-2">
+                      <div className="flex justify-between items-center">
+                        <Label htmlFor="roomGst" className="text-xs font-bold text-slate-800">
+                          Room Accommodation GST Rate (%)
+                        </Label>
+                        <Badge variant="outline" className="font-mono font-bold text-xs bg-white text-blue-700">
+                          Standard 12%
+                        </Badge>
+                      </div>
+                      <Input
+                        id="roomGst"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="28"
+                        placeholder="12.0"
+                        value={gstFormData.roomGstRate}
+                        onChange={(e) => setGstFormData({ ...gstFormData, roomGstRate: e.target.value })}
+                        className="text-xs font-mono font-bold"
+                      />
+                      <p className="text-[11px] text-slate-500 leading-snug">
+                        Standard Indian hotel tariff slab: 12% for room tariffs up to ₹7,500/night (18% if above). Auto-applied on booking engine reservations.
+                      </p>
+                    </div>
+
+                    <div className="p-4 bg-slate-50 border rounded-xl space-y-2">
+                      <div className="flex justify-between items-center">
+                        <Label htmlFor="foodGst" className="text-xs font-bold text-slate-800">
+                          Restaurant Food & F&B GST Rate (%)
+                        </Label>
+                        <Badge variant="outline" className="font-mono font-bold text-xs bg-white text-emerald-700">
+                          Standard 5%
+                        </Badge>
+                      </div>
+                      <Input
+                        id="foodGst"
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="28"
+                        placeholder="5.0"
+                        value={gstFormData.foodGstRate}
+                        onChange={(e) => setGstFormData({ ...gstFormData, foodGstRate: e.target.value })}
+                        className="text-xs font-mono font-bold"
+                      />
+                      <p className="text-[11px] text-slate-500 leading-snug">
+                        Standard F&B GST slab: 5% (without ITC) on restaurant dining, room service orders, and takeaway tabs.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* SAC Codes */}
+                <div className="space-y-4">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-slate-500 border-b pb-2">
+                    Services Accounting Codes (SAC Codes)
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="roomSac" className="text-xs font-bold text-slate-700">Room Accommodation SAC Code</Label>
+                      <Input
+                        id="roomSac"
+                        placeholder="996311"
+                        value={gstFormData.roomSacCode}
+                        onChange={(e) => setGstFormData({ ...gstFormData, roomSacCode: e.target.value })}
+                        className="font-mono text-xs"
+                      />
+                      <span className="text-[10px] text-slate-400">SAC code for hotel accommodation services (default 996311)</span>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="foodSac" className="text-xs font-bold text-slate-700">Restaurant / F&B SAC Code</Label>
+                      <Input
+                        id="foodSac"
+                        placeholder="99633"
+                        value={gstFormData.foodSacCode}
+                        onChange={(e) => setGstFormData({ ...gstFormData, foodSacCode: e.target.value })}
+                        className="font-mono text-xs"
+                      />
+                      <span className="text-[10px] text-slate-400">SAC code for supply of food or drinks in restaurants (default 99633)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Auto-GST Info Alert */}
+                <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 flex items-start gap-2.5">
+                  <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <p className="font-bold">Real-Time Auto-GST Integration Active</p>
+                    <p className="text-[11px] text-blue-800 leading-relaxed">
+                      Changes saved here instantly update the public <strong>Booking Engine</strong> (calculating room tariff GST breakdown for guests), the <strong>Restaurant Live Billing & Dine-In Portal</strong>, and tax invoice generation throughout the PMS.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-2">
+                  <Button
+                    type="submit"
+                    disabled={updateGstMutation.isPending}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs h-10 px-6 rounded-xl shadow-sm flex items-center gap-2"
+                  >
+                    <Save className="w-4 h-4" />
+                    {updateGstMutation.isPending ? 'Saving Settings...' : 'Save GST Settings'}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+
+          {/* Property GST Overview Table for Chain */}
+          <Card className="border-slate-200 shadow-sm bg-white">
+            <CardHeader className="bg-slate-50/50 border-b border-slate-100 py-4">
+              <CardTitle className="text-base text-slate-900">Hotel Chain GST Directory</CardTitle>
+              <CardDescription>
+                Overview of GST configurations across all properties in your hotel group.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto w-full">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="hover:bg-transparent">
+                      <TableHead className="pl-6">Hotel Property</TableHead>
+                      <TableHead>GSTIN</TableHead>
+                      <TableHead>State & Code</TableHead>
+                      <TableHead>Room GST Rate</TableHead>
+                      <TableHead>Food GST Rate</TableHead>
+                      <TableHead className="text-right pr-6">Status</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {hotelsList.map((h: any) => {
+                      const isCurrent = user?.hotelId === h.id;
+                      return (
+                        <TableRow key={h.id} className={isCurrent ? 'bg-amber-50/30' : ''}>
+                          <TableCell className="pl-6 font-bold text-slate-800">
+                            <div className="flex items-center gap-2">
+                              {h.name}
+                              {isCurrent && (
+                                <Badge className="text-[10px] bg-amber-600 hover:bg-amber-600 text-white font-bold">
+                                  Active
+                                </Badge>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-xs text-slate-700">
+                            {h.gstin || <span className="text-slate-400 italic">Not configured</span>}
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-600">
+                            {h.billingStateName ? `${h.billingStateName} (${h.billingStateCode || 'N/A'})` : 'N/A'}
+                          </TableCell>
+                          <TableCell className="font-mono font-semibold text-xs text-blue-700">
+                            {h.roomGstRate ?? 12.0}%
+                          </TableCell>
+                          <TableCell className="font-mono font-semibold text-xs text-emerald-700">
+                            {h.foodGstRate ?? 5.0}%
+                          </TableCell>
+                          <TableCell className="text-right pr-6">
+                            {h.gstin ? (
+                              <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px] font-bold">
+                                GST Configured
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-slate-100 text-slate-600 border-slate-200 text-[10px]">
+                                Pending GSTIN
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </div>

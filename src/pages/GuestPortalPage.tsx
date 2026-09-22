@@ -23,7 +23,9 @@ import {
   Trash2, 
   ChevronRight,
   Edit,
-  Star
+  Star,
+  Search,
+  X
 } from 'lucide-react';
 
 export default function GuestPortalPage() {
@@ -40,6 +42,8 @@ export default function GuestPortalPage() {
   const [guestOrders, setGuestOrders] = useState<any[]>([]);
   const [editingOrder, setEditingOrder] = useState<any>(null);
   const [editingItems, setEditingItems] = useState<any[]>([]);
+  const [menuSearchQuery, setMenuSearchQuery] = useState('');
+  const [selectedMenuCategory, setSelectedMenuCategory] = useState('All');
 
   // Bill state
   const [billDetails, setBillDetails] = useState<any>(null);
@@ -581,50 +585,144 @@ export default function GuestPortalPage() {
               </div>
             )}
 
-            {/* Menu Sections */}
-            <div className="space-y-5">
-              {Array.from(new Set(menuItems.map((m: any) => m.category as string).filter(Boolean))).map(cat => {
-                const items = menuItems.filter(m => m.category === cat);
-                if (items.length === 0) return null;
+            {/* SEARCH AND CATEGORY FILTER BOX */}
+            <div className="space-y-3">
+              {/* Search Input */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-[#C5A880] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input 
+                  type="text"
+                  placeholder="Search dishes, beverages, desserts..."
+                  value={menuSearchQuery}
+                  onChange={(e) => setMenuSearchQuery(e.target.value)}
+                  className="w-full bg-white border border-[#EAE6DF] focus:border-[#C5A880] rounded-2xl pl-10 pr-9 py-2.5 text-xs text-[#1E2022] font-semibold placeholder:text-[#94A3B8] outline-none transition-all shadow-sm"
+                />
+                {menuSearchQuery && (
+                  <button 
+                    onClick={() => setMenuSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-0.5 rounded-full hover:bg-slate-100 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Horizontal Category Pill Filter Bar */}
+              <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                {['All', ...Array.from(new Set(menuItems.map((m: any) => m.category as string).filter(Boolean)))].map((cat) => {
+                  const isSelected = selectedMenuCategory === cat;
+                  const count = cat === 'All' 
+                    ? menuItems.length 
+                    : menuItems.filter((m: any) => m.category === cat).length;
+                  return (
+                    <button
+                      key={cat}
+                      onClick={() => setSelectedMenuCategory(cat)}
+                      className={`whitespace-nowrap px-3.5 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 shrink-0 ${
+                        isSelected 
+                          ? 'bg-[#C5A880] text-white shadow-sm shadow-[#C5A880]/30' 
+                          : 'bg-white text-[#475569] border border-[#EAE6DF] hover:border-[#C5A880]/50'
+                      }`}
+                    >
+                      <span>{cat}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold ${
+                        isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Menu Items List */}
+            {(() => {
+              const filteredItems = menuItems.filter((item: any) => {
+                const matchesCategory = selectedMenuCategory === 'All' || item.category === selectedMenuCategory;
+                const q = menuSearchQuery.trim().toLowerCase();
+                const matchesQuery = !q || 
+                  (item.name && item.name.toLowerCase().includes(q)) || 
+                  (item.description && item.description.toLowerCase().includes(q));
+                return matchesCategory && matchesQuery;
+              });
+
+              if (filteredItems.length === 0) {
                 return (
-                  <div key={cat} className="space-y-3">
-                    <h3 className="text-xs font-black uppercase text-[#C5A880] tracking-widest ml-1">{cat}</h3>
-                    <div className="space-y-3">
-                      {items.map(item => (
-                        <div key={item.id} className="bg-white p-4 rounded-3xl border border-[#EAE6DF] flex justify-between items-center gap-4 shadow-sm">
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-bold text-sm text-[#1E2022] truncate">{item.name}</h4>
-                            <p className="text-[11px] text-[#334155] line-clamp-2 mt-1 leading-relaxed font-medium">{item.description}</p>
-                            <p className="text-xs font-bold text-[#C5A880] mt-2">₹{Number(item.price).toFixed(2)}</p>
-                          </div>
-                          
-                          <div className="flex items-center gap-2 bg-[#FAF8F5] p-1 rounded-xl border border-[#EAE6DF] shrink-0">
-                            {cart[item.id] ? (
-                              <>
-                                <button onClick={() => updateCartQty(item.id, -1)} className="p-1.5 text-[#334155] hover:text-[#C5A880] transition-colors">
-                                  <Minus className="w-3.5 h-3.5" />
-                                </button>
-                                <span className="text-xs font-bold text-[#1E2022] px-1.5">{cart[item.id]}</span>
-                                <button onClick={() => updateCartQty(item.id, 1)} className="p-1.5 text-[#334155] hover:text-[#C5A880] transition-colors">
-                                  <Plus className="w-3.5 h-3.5" />
-                                </button>
-                              </>
-                            ) : (
-                              <button 
-                                onClick={() => updateCartQty(item.id, 1)}
-                                className="px-3.5 py-1.5 text-[11px] font-bold uppercase text-[#C5A880] hover:bg-white rounded-lg transition-all"
-                              >
-                                Add
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      ))}
+                  <div className="text-center py-12 bg-white rounded-3xl border border-[#EAE6DF] p-6 space-y-3 shadow-sm">
+                    <div className="w-12 h-12 bg-amber-50 rounded-2xl flex items-center justify-center mx-auto text-[#C5A880]">
+                      <Search className="w-6 h-6" />
                     </div>
+                    <p className="text-sm font-bold text-[#1E2022]">No dishes found</p>
+                    <p className="text-xs text-slate-400 font-medium">
+                      No menu items match your search for "{menuSearchQuery}" {selectedMenuCategory !== 'All' ? `in ${selectedMenuCategory}` : ''}.
+                    </p>
+                    <Button 
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setMenuSearchQuery('');
+                        setSelectedMenuCategory('All');
+                      }}
+                      className="text-xs font-bold text-[#C5A880] border-[#C5A880]/30 hover:bg-amber-50/50"
+                    >
+                      Clear Search & Filter
+                    </Button>
                   </div>
                 );
-              })}
-            </div>
+              }
+
+              const activeCategories = Array.from(new Set(filteredItems.map((m: any) => m.category as string).filter(Boolean)));
+
+              return (
+                <div className="space-y-5">
+                  {activeCategories.map(cat => {
+                    const items = filteredItems.filter((m: any) => m.category === cat);
+                    if (items.length === 0) return null;
+                    return (
+                      <div key={cat} className="space-y-3">
+                        <div className="flex justify-between items-center ml-1">
+                          <h3 className="text-xs font-black uppercase text-[#C5A880] tracking-widest">{cat}</h3>
+                          <span className="text-[10px] font-bold text-slate-400">{items.length} dishes</span>
+                        </div>
+                        <div className="space-y-3">
+                          {items.map((item: any) => (
+                            <div key={item.id} className="bg-white p-4 rounded-3xl border border-[#EAE6DF] flex justify-between items-center gap-4 shadow-sm hover:border-[#C5A880]/40 transition-colors">
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-bold text-sm text-[#1E2022] truncate">{item.name}</h4>
+                                <p className="text-[11px] text-[#334155] line-clamp-2 mt-1 leading-relaxed font-medium">{item.description}</p>
+                                <p className="text-xs font-bold text-[#C5A880] mt-2">₹{Number(item.price).toFixed(2)}</p>
+                              </div>
+                              
+                              <div className="flex items-center gap-2 bg-[#FAF8F5] p-1 rounded-xl border border-[#EAE6DF] shrink-0">
+                                {cart[item.id] ? (
+                                  <>
+                                    <button onClick={() => updateCartQty(item.id, -1)} className="p-1.5 text-[#334155] hover:text-[#C5A880] transition-colors">
+                                      <Minus className="w-3.5 h-3.5" />
+                                    </button>
+                                    <span className="text-xs font-bold text-[#1E2022] px-1.5">{cart[item.id]}</span>
+                                    <button onClick={() => updateCartQty(item.id, 1)} className="p-1.5 text-[#334155] hover:text-[#C5A880] transition-colors">
+                                      <Plus className="w-3.5 h-3.5" />
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button 
+                                    onClick={() => updateCartQty(item.id, 1)}
+                                    className="px-3.5 py-1.5 text-[11px] font-bold uppercase text-[#C5A880] hover:bg-white rounded-lg transition-all"
+                                  >
+                                    Add
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {/* List of active and past orders placed by the guest */}
             <div className="space-y-4 pt-6 border-t border-[#EAE6DF]">

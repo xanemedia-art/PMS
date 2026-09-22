@@ -329,4 +329,113 @@ router.get('/financials', async (req: AuthRequest, res) => {
   }
 });
 
+// GET /api/reports/expenses-by-category
+// Aggregates expenses by category with exact previous month figures & comparison
+router.get('/expenses-by-category', async (req: AuthRequest, res) => {
+  try {
+    const hotelId = req.user!.hotelId;
+    const now = new Date();
+    
+    // Default to previous month if not specified
+    const prevMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const defaultMonth = `${prevMonthDate.getFullYear()}-${String(prevMonthDate.getMonth() + 1).padStart(2, '0')}`;
+    
+    const targetMonth = (req.query.month as string) || defaultMonth; // e.g. "2026-08"
+
+    // Calculate the month immediately preceding targetMonth for comparison
+    const [tYear, tMonth] = targetMonth.split('-').map(Number);
+    const priorMonthDate = new Date(tYear, tMonth - 2, 1);
+    const priorMonth = `${priorMonthDate.getFullYear()}-${String(priorMonthDate.getMonth() + 1).padStart(2, '0')}`;
+
+    // Fetch all expenses for this hotel
+    const allExpenses = await db.select()
+      .from(expenses)
+      .where(eq(expenses.hotelId, hotelId));
+
+    // Filter for target month
+    const targetExpenses = allExpenses.filter(e => {
+      const d = new Date(e.createdAt || new Date());
+      const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return m === targetMonth;
+    });
+
+    // Filter for prior month
+    const priorExpenses = allExpenses.filter(e => {
+      const d = new Date(e.createdAt || new Date());
+      const m = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      return m === priorMonth;
+    });
+
+    const targetTotal = targetExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+    const priorTotal = priorExpenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+    // Group target month by category (type)
+    const categoryMap: Record<string, { totalAmount: number; count: number; items: any[] }> = {};
+    targetExpenses.forEach(e => {
+      const cat = (e.type || 'Other').trim();
+      if (!categoryMap[cat]) {
+        categoryMap[cat] = { totalAmount: 0, count: 0, items: [] };
+      }
+      categoryMap[cat].totalAmount += Number(e.amount) || 0;
+      categoryMap[cat].count += 1;
+      categoryMap[cat].items.push({
+        id: e.id,
+        name: e.name,
+        amount: Number(e.amount) || 0,
+        description: e.description,
+        createdAt: e.createdAt
+      });
+    });
+
+    // Group prior month by category for individual category comparison
+    const priorCategoryMap: Record<string, number> = {};
+    priorExpenses.forEach(e => {
+      const cat = (e.type || 'Other').trim();
+      priorCategoryMap[cat] = (priorCategoryMap[cat] || 0) + (Number(e.amount) || 0);
+    });
+
+    const categoriesList = Object.entries(categoryMap).map(([category, data]) => {
+      const percentage = targetTotal > 0 ? (data.totalAmount / targetTotal) * 100 : 0;
+      const priorCatAmount = priorCategoryMap[category] || 0;
+      const changeAmount = data.totalAmount - priorCatAmount;
+      const percentChange = priorCatAmount > 0 ? ((data.totalAmount - priorCatAmount) / priorCatAmount) * 100 : null;
+
+      return {
+        category,
+        totalAmount: Number(data.totalAmount.toFixed(2)),
+        percentage: Number(percentage.toFixed(1)),
+        count: data.count,
+        priorAmount: Number(priorCatAmount.toFixed(2)),
+        changeAmount: Number(changeAmount.toFixed(2)),
+        percentChange: percentChange !== null ? Number(percentChange.toFixed(1)) : null,
+        items: data.items
+      };
+    }).sort((a, b) => b.totalAmount - a.totalAmount);
+
+    // Available months list for picker
+    const availableMonths = Array.from(new Set(allExpenses.map(e => {
+      const d = new Date(e.createdAt || new Date());
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }))).sort((a, b) => b.localeCompare(a));
+
+    if (!availableMonths.includes(defaultMonth)) availableMonths.unshift(defaultMonth);
+
+    res.json({
+      targetMonth,
+      targetMonthLabel: new Date(tYear, tMonth - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      priorMonth,
+      priorMonthLabel: priorMonthDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+      targetTotal: Number(targetTotal.toFixed(2)),
+      priorTotal: Number(priorTotal.toFixed(2)),
+      overallChange: Number((targetTotal - priorTotal).toFixed(2)),
+      overallPercentChange: priorTotal > 0 ? Number((((targetTotal - priorTotal) / priorTotal) * 100).toFixed(1)) : null,
+      categories: categoriesList,
+      availableMonths
+    });
+  } catch (error) {
+    console.error('Failed to aggregate expenses by category:', error);
+    res.status(500).json({ error: 'Failed to retrieve category expense report' });
+  }
+});
+
 export default router;
