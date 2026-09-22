@@ -1,10 +1,28 @@
 import express from 'express';
 import { db } from '../../db/index.js';
-import { restaurantInventory, restaurantOrders, bookings, rooms, restaurantMenu } from '../../db/schema.js';
-import { eq, and, desc } from 'drizzle-orm';
+import { restaurantInventory, restaurantOrders, bookings, rooms, restaurantMenu, restaurantCategories } from '../../db/schema.js';
+import { eq, and, desc, sql } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 
 const router = express.Router();
+
+let categoriesTableInitialized = false;
+async function ensureCategoriesTable() {
+  if (categoriesTableInitialized) return;
+  try {
+    await db.execute(sql`
+      CREATE TABLE IF NOT EXISTS restaurant_categories (
+        id SERIAL PRIMARY KEY,
+        hotel_id INTEGER REFERENCES hotels(id) NOT NULL,
+        name TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    categoriesTableInitialized = true;
+  } catch (err: any) {
+    console.warn('ensureCategoriesTable warning:', err?.message);
+  }
+}
 
 // Menu endpoint is public so guests can view it
 router.get('/menu', async (req, res) => {
@@ -255,6 +273,149 @@ router.delete('/inventory/:id', requireRole(['admin', 'manager']), async (req: A
 });
 
 
+// --- RESTAURANT CATEGORIES MANAGEMENT ---
+
+// Get all categories for active hotel
+router.get('/admin/categories', async (req: AuthRequest, res) => {
+  try {
+    await ensureCategoriesTable();
+    const hotelId = req.user!.hotelId;
+
+    // Fetch registered categories
+    let cats = await db.select()
+      .from(restaurantCategories)
+      .where(eq(restaurantCategories.hotelId, hotelId))
+      .orderBy(restaurantCategories.name);
+
+    // If hotel has never initialized categories, seed from existing menu or defaults
+    if (cats.length === 0) {
+      const existingMenuItems = await db.select({ category: restaurantMenu.category })
+        .from(restaurantMenu)
+        .where(eq(restaurantMenu.hotelId, hotelId));
+
+      const distinctCats = Array.from(new Set(existingMenuItems.map(m => m.category).filter(Boolean)));
+      const initialCats = distinctCats.length > 0 ? distinctCats : ['Starters', 'Mains', 'Drinks', 'Desserts'];
+
+      for (const catName of initialCats) {
+        try {
+          await db.insert(restaurantCategories).values({ hotelId, name: catName });
+        } catch (e) {}
+      }
+
+      cats = await db.select()
+        .from(restaurantCategories)
+        .where(eq(restaurantCategories.hotelId, hotelId))
+        .orderBy(restaurantCategories.name);
+    }
+
+    // Count items per category
+    const menuItems = await db.select({ category: restaurantMenu.category })
+      .from(restaurantMenu)
+      .where(eq(restaurantMenu.hotelId, hotelId));
+
+    const counts: Record<string, number> = {};
+    for (const item of menuItems) {
+      counts[item.category] = (counts[item.category] || 0) + 1;
+    }
+
+    const result = cats.map(c => ({
+      id: c.id,
+      name: c.name,
+      itemCount: counts[c.name] || 0,
+    }));
+
+    res.json(result);
+  } catch (error: any) {
+    console.error('Error fetching categories:', error);
+    res.status(500).json({ error: 'Failed to fetch restaurant categories' });
+  }
+});
+
+// Add new custom category
+router.post('/admin/categories', async (req: AuthRequest, res) => {
+  try {
+    await ensureCategoriesTable();
+    const hotelId = req.user!.hotelId;
+    const { name } = req.body;
+
+    if (!name || !name.trim()) {
+      res.status(400).json({ error: 'Category name is required' });
+      return;
+    }
+
+    const trimmedName = name.trim();
+
+    // Check if already exists (case-insensitive)
+    const existing = await db.select()
+      .from(restaurantCategories)
+      .where(and(
+        eq(restaurantCategories.hotelId, hotelId),
+        sql`LOWER(${restaurantCategories.name}) = LOWER(${trimmedName})`
+      ));
+
+    if (existing.length > 0) {
+      res.status(400).json({ error: 'Category already exists' });
+      return;
+    }
+
+    const newCat = await db.insert(restaurantCategories).values({
+      hotelId,
+      name: trimmedName,
+    }).returning();
+
+    res.status(201).json(newCat[0]);
+  } catch (error: any) {
+    console.error('Error creating category:', error);
+    res.status(500).json({ error: 'Failed to create category' });
+  }
+});
+
+// Delete a category
+router.delete('/admin/categories/:name', async (req: AuthRequest, res) => {
+  try {
+    await ensureCategoriesTable();
+    const hotelId = req.user!.hotelId;
+    const catName = decodeURIComponent(req.params.name).trim();
+    const deleteItems = req.query.deleteItems === 'true' || req.body?.deleteItems === true;
+
+    if (!catName) {
+      res.status(400).json({ error: 'Category name is required' });
+      return;
+    }
+
+    if (deleteItems) {
+      // Purge all menu items belonging to this category
+      await db.delete(restaurantMenu)
+        .where(and(eq(restaurantMenu.hotelId, hotelId), eq(restaurantMenu.category, catName)));
+    } else {
+      // Reassign menu items in this category to "General"
+      await db.update(restaurantMenu)
+        .set({ category: 'General' })
+        .where(and(eq(restaurantMenu.hotelId, hotelId), eq(restaurantMenu.category, catName)));
+
+      // Ensure "General" exists in categories
+      const generalCheck = await db.select()
+        .from(restaurantCategories)
+        .where(and(eq(restaurantCategories.hotelId, hotelId), eq(restaurantCategories.name, 'General')));
+      if (generalCheck.length === 0) {
+        try {
+          await db.insert(restaurantCategories).values({ hotelId, name: 'General' });
+        } catch (e) {}
+      }
+    }
+
+    // Delete the category from restaurant_categories
+    await db.delete(restaurantCategories)
+      .where(and(eq(restaurantCategories.hotelId, hotelId), eq(restaurantCategories.name, catName)));
+
+    res.json({ success: true, message: `Category "${catName}" deleted successfully` });
+  } catch (error: any) {
+    console.error('Error deleting category:', error);
+    res.status(500).json({ error: 'Failed to delete category' });
+  }
+});
+
+
 // --- RESTAURANT MENU MANAGEMENT (STAFF) ---
 
 // Get all menu items (including unavailable ones) for active hotel
@@ -271,9 +432,85 @@ router.get('/admin/menu', async (req: AuthRequest, res) => {
   }
 });
 
+// Bulk upload menu items
+router.post('/admin/menu/bulk', async (req: AuthRequest, res) => {
+  try {
+    await ensureCategoriesTable();
+    const hotelId = req.user!.hotelId;
+    const { items } = req.body;
+
+    if (!Array.isArray(items) || items.length === 0) {
+      res.status(400).json({ error: 'An array of menu items is required' });
+      return;
+    }
+
+    const validItems: any[] = [];
+    const categoriesToRegister = new Set<string>();
+
+    for (const item of items) {
+      const name = (item.name || '').trim();
+      const category = (item.category || 'General').trim();
+      const price = parseFloat(item.price);
+      const description = (item.description || '').trim();
+      const isAvailable = item.isAvailable !== false;
+
+      if (!name || isNaN(price) || price < 0) {
+        continue; // Skip invalid entries
+      }
+
+      validItems.push({
+        hotelId,
+        name,
+        category: category || 'General',
+        price,
+        description: description || null,
+        isAvailable,
+      });
+
+      if (category) {
+        categoriesToRegister.add(category);
+      }
+    }
+
+    if (validItems.length === 0) {
+      res.status(400).json({ error: 'No valid menu items found in the upload payload' });
+      return;
+    }
+
+    // Auto-register any new categories in restaurantCategories
+    for (const catName of categoriesToRegister) {
+      const catExists = await db.select()
+        .from(restaurantCategories)
+        .where(and(
+          eq(restaurantCategories.hotelId, hotelId),
+          sql`LOWER(${restaurantCategories.name}) = LOWER(${catName})`
+        ));
+      if (catExists.length === 0) {
+        try {
+          await db.insert(restaurantCategories).values({ hotelId, name: catName });
+        } catch (e) {}
+      }
+    }
+
+    // Insert items in batch
+    const inserted = await db.insert(restaurantMenu).values(validItems).returning();
+
+    res.json({
+      success: true,
+      count: inserted.length,
+      items: inserted,
+      message: `Successfully imported ${inserted.length} menu items!`
+    });
+  } catch (error: any) {
+    console.error('Bulk menu upload error:', error);
+    res.status(500).json({ error: 'Failed to bulk upload menu items' });
+  }
+});
+
 // Add new menu item
 router.post('/admin/menu', async (req: AuthRequest, res) => {
   try {
+    await ensureCategoriesTable();
     const hotelId = req.user!.hotelId;
     const { name, category, price, description, isAvailable } = req.body;
 
@@ -282,10 +519,25 @@ router.post('/admin/menu', async (req: AuthRequest, res) => {
       return;
     }
 
+    const trimmedCat = category.trim();
+
+    // Ensure category exists in restaurantCategories
+    const catExists = await db.select()
+      .from(restaurantCategories)
+      .where(and(
+        eq(restaurantCategories.hotelId, hotelId),
+        sql`LOWER(${restaurantCategories.name}) = LOWER(${trimmedCat})`
+      ));
+    if (catExists.length === 0) {
+      try {
+        await db.insert(restaurantCategories).values({ hotelId, name: trimmedCat });
+      } catch (e) {}
+    }
+
     const newItem = await db.insert(restaurantMenu).values({
       hotelId,
-      name,
-      category,
+      name: name.trim(),
+      category: trimmedCat,
       price: parseFloat(price),
       description: description || null,
       isAvailable: isAvailable ?? true
@@ -300,13 +552,28 @@ router.post('/admin/menu', async (req: AuthRequest, res) => {
 // Edit existing menu item
 router.patch('/admin/menu/:id', async (req: AuthRequest, res) => {
   try {
+    await ensureCategoriesTable();
     const hotelId = req.user!.hotelId;
     const id = parseInt(req.params.id);
     const { name, category, price, description, isAvailable } = req.body;
 
     const updateFields: any = {};
-    if (name !== undefined) updateFields.name = name;
-    if (category !== undefined) updateFields.category = category;
+    if (name !== undefined) updateFields.name = name.trim();
+    if (category !== undefined) {
+      updateFields.category = category.trim();
+      // Ensure category exists
+      const catExists = await db.select()
+        .from(restaurantCategories)
+        .where(and(
+          eq(restaurantCategories.hotelId, hotelId),
+          sql`LOWER(${restaurantCategories.name}) = LOWER(${updateFields.category})`
+        ));
+      if (catExists.length === 0) {
+        try {
+          await db.insert(restaurantCategories).values({ hotelId, name: updateFields.category });
+        } catch (e) {}
+      }
+    }
     if (price !== undefined) updateFields.price = parseFloat(price);
     if (description !== undefined) updateFields.description = description || null;
     if (isAvailable !== undefined) updateFields.isAvailable = isAvailable;

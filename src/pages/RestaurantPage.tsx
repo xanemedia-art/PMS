@@ -6,7 +6,11 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
-import { Coffee, Plus, Minus, AlertTriangle, ChefHat, CheckCircle2, ClipboardList, Edit, Trash2, Layers, ToggleLeft, ToggleRight } from 'lucide-react';
+import { 
+  Coffee, Plus, Minus, AlertTriangle, ChefHat, CheckCircle2, ClipboardList, 
+  Edit, Trash2, Layers, ToggleLeft, ToggleRight, Settings2, UploadCloud, 
+  Download, FileSpreadsheet, FileUp, X, Check, FolderPlus
+} from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
@@ -38,6 +42,32 @@ export default function RestaurantPage() {
     description: '',
     isAvailable: true
   });
+
+  // Inline Quick Add Category in Menu Dialog
+  const [showQuickAddCat, setShowQuickAddCat] = useState(false);
+  const [quickCatName, setQuickCatName] = useState('');
+
+  // Category Management State
+  const [isManageCategoriesOpen, setIsManageCategoriesOpen] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [categoryToDelete, setCategoryToDelete] = useState<{ name: string; itemCount: number } | null>(null);
+  const [deleteItemAction, setDeleteItemAction] = useState<'reassign' | 'delete'>('reassign');
+
+  // Bulk Upload State
+  const [isBulkUploadOpen, setIsBulkUploadOpen] = useState(false);
+  const [bulkUploadTab, setBulkUploadTab] = useState<'file' | 'paste'>('file');
+  const [bulkPasteText, setBulkPasteText] = useState('');
+  const [bulkRows, setBulkRows] = useState<Array<{
+    id: number;
+    name: string;
+    category: string;
+    price: string;
+    description: string;
+    isValid: boolean;
+    error?: string;
+    isNewCategory: boolean;
+  }>>([]);
+  const [bulkFileName, setBulkFileName] = useState<string>('');
 
   // KOT Edit states
   const [editingOrder, setEditingOrder] = useState<any>(null);
@@ -81,11 +111,30 @@ export default function RestaurantPage() {
     }
   });
 
+  // 4. Fetch Custom Categories
+  const { data: categories = [], isLoading: categoriesLoading } = useQuery({
+    queryKey: ['restaurantCategories'],
+    queryFn: async () => {
+      const res = await fetch('/api/restaurant/admin/categories', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to fetch categories');
+      return res.json();
+    }
+  });
+
+  // Dynamic category names list
+  const categoryNames = useMemo<string[]>(() => {
+    const fromDb = categories.map((c: any) => c.name);
+    const fromMenu = Array.from(new Set(menuItems.map((m: any) => m.category as string)));
+    const combined = Array.from(new Set([...fromDb, ...fromMenu])).filter(Boolean);
+    return combined.length > 0 ? combined : ['Starters', 'Mains', 'Drinks', 'Desserts'];
+  }, [categories, menuItems]);
+
   // Unique categories for navigation groups
   const menuCategories = useMemo<string[]>(() => {
-    const cats = new Set<string>(menuItems.map((m: any) => m.category as string));
-    return ['All', ...Array.from(cats)];
-  }, [menuItems]);
+    return ['All', ...categoryNames];
+  }, [categoryNames]);
 
   // Mutations
   // Update order status
@@ -274,6 +323,236 @@ export default function RestaurantPage() {
     },
     onError: (err: any) => alert(err.message)
   });
+
+  // Add Category Mutation
+  const addCategoryMutation = useMutation({
+    mutationFn: async (name: string) => {
+      const res = await fetch('/api/restaurant/admin/categories', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ name })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to create category');
+      }
+      return res.json();
+    },
+    onSuccess: (newCat) => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantCategories'] });
+      queryClient.invalidateQueries({ queryKey: ['restaurantMenuAdmin'] });
+      setNewCategoryName('');
+      if (showQuickAddCat) {
+        setMenuForm(prev => ({ ...prev, category: newCat.name }));
+        setShowQuickAddCat(false);
+        setQuickCatName('');
+      }
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  // Delete Category Mutation
+  const deleteCategoryMutation = useMutation({
+    mutationFn: async ({ name, deleteItems }: { name: string; deleteItems: boolean }) => {
+      const res = await fetch(`/api/restaurant/admin/categories/${encodeURIComponent(name)}?deleteItems=${deleteItems}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to delete category');
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantCategories'] });
+      queryClient.invalidateQueries({ queryKey: ['restaurantMenuAdmin'] });
+      if (selectedCategoryFilter === categoryToDelete?.name) {
+        setSelectedCategoryFilter('All');
+      }
+      setCategoryToDelete(null);
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  // Bulk Upload Menu Mutation
+  const bulkUploadMenuMutation = useMutation({
+    mutationFn: async (items: Array<{ name: string; category: string; price: number; description?: string }>) => {
+      const res = await fetch('/api/restaurant/admin/menu/bulk', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ items })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to bulk upload menu items');
+      }
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['restaurantCategories'] });
+      queryClient.invalidateQueries({ queryKey: ['restaurantMenuAdmin'] });
+      setIsBulkUploadOpen(false);
+      setBulkRows([]);
+      setBulkPasteText('');
+      setBulkFileName('');
+      alert(data.message || `Successfully imported ${data.count} menu items!`);
+    },
+    onError: (err: any) => alert(err.message)
+  });
+
+  // Helper to parse CSV/TSV text into structured rows
+  const parseMenuText = (text: string) => {
+    const lines = text.split(/\r?\n/).filter(line => line.trim().length > 0);
+    if (lines.length === 0) return [];
+
+    let startIndex = 0;
+    const firstLineLower = lines[0].toLowerCase();
+    if (firstLineLower.includes('name') && (firstLineLower.includes('price') || firstLineLower.includes('category'))) {
+      startIndex = 1;
+    }
+
+    const rows: Array<{
+      id: number;
+      name: string;
+      category: string;
+      price: string;
+      description: string;
+      isValid: boolean;
+      error?: string;
+      isNewCategory: boolean;
+    }> = [];
+
+    for (let i = startIndex; i < lines.length; i++) {
+      const rawLine = lines[i].trim();
+      if (!rawLine) continue;
+
+      let tokens: string[] = [];
+      if (rawLine.includes('\t')) {
+        tokens = rawLine.split('\t').map(t => t.trim().replace(/^["']|["']$/g, ''));
+      } else {
+        const regex = /(?:,|\n|^)("(?:(?:"")*[^"]*)*"|[^",\n]*|(?:\n|$))/g;
+        let match;
+        while ((match = regex.exec(rawLine)) !== null) {
+          let val = match[1] || '';
+          if (val.startsWith('"') && val.endsWith('"')) {
+            val = val.slice(1, -1).replace(/""/g, '"');
+          }
+          tokens.push(val.trim());
+          if (regex.lastIndex >= rawLine.length) break;
+        }
+      }
+
+      const name = (tokens[0] || '').trim();
+      const category = (tokens[1] || 'General').trim();
+      const rawPrice = (tokens[2] || '').replace(/[^0-9.]/g, '');
+      const description = (tokens[3] || '').trim();
+
+      const priceNum = parseFloat(rawPrice);
+      const hasValidName = name.length > 0;
+      const hasValidPrice = !isNaN(priceNum) && priceNum >= 0;
+
+      const isValid = hasValidName && hasValidPrice;
+      let error: string | undefined;
+      if (!hasValidName) error = 'Missing item name';
+      else if (!hasValidPrice) error = 'Invalid price';
+
+      const isNewCategory = category.length > 0 && !categoryNames.some(c => c.toLowerCase() === category.toLowerCase());
+
+      rows.push({
+        id: i,
+        name,
+        category: category || 'General',
+        price: rawPrice,
+        description,
+        isValid,
+        error,
+        isNewCategory
+      });
+    }
+
+    return rows;
+  };
+
+  // CSV template generator
+  const downloadCSVTemplate = () => {
+    const csvContent = "data:text/csv;charset=utf-8," + 
+      "Name,Category,Price,Description\n" +
+      "Crispy Corn,Starters,180,Sweet corn tossed with herbs and spices\n" +
+      "Butter Chicken with Rice,Mains,380,Creamy chicken tikka gravy served with fragrant basmati rice\n" +
+      "Fresh Lime Soda,Drinks,90,Refreshing sweet and salty soda\n" +
+      "Chocolate Brownie,Desserts,150,Warm chocolate brownie with chocolate drizzle";
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "menu_bulk_template.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleCSVFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBulkFileName(file.name);
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const content = event.target?.result as string;
+      if (content) {
+        const parsed = parseMenuText(content);
+        setBulkRows(parsed);
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handlePasteParse = () => {
+    if (!bulkPasteText.trim()) return;
+    const parsed = parseMenuText(bulkPasteText);
+    setBulkRows(parsed);
+  };
+
+  const handleRemoveBulkRow = (id: number) => {
+    setBulkRows(prev => prev.filter(r => r.id !== id));
+  };
+
+  const handleExecuteBulkUpload = () => {
+    const validItems = bulkRows.filter(r => r.isValid).map(r => ({
+      name: r.name,
+      category: r.category,
+      price: parseFloat(r.price),
+      description: r.description || undefined
+    }));
+    if (validItems.length === 0) {
+      alert('No valid items to upload');
+      return;
+    }
+    bulkUploadMenuMutation.mutate(validItems);
+  };
+
+  // Color generator for category badges
+  const getCategoryBadgeClass = (category: string) => {
+    if (category === 'Starters') return 'bg-amber-100 text-amber-700';
+    if (category === 'Mains') return 'bg-blue-100 text-blue-700';
+    if (category === 'Drinks') return 'bg-teal-100 text-teal-700';
+    if (category === 'Desserts') return 'bg-purple-100 text-purple-700';
+    const hash = category.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    const styles = [
+      'bg-rose-100 text-rose-700',
+      'bg-emerald-100 text-emerald-700',
+      'bg-indigo-100 text-indigo-700',
+      'bg-orange-100 text-orange-700',
+      'bg-cyan-100 text-cyan-700',
+      'bg-violet-100 text-violet-700',
+    ];
+    return styles[hash % styles.length];
+  };
 
   // Handle Inventory Submit
   const handleAddInventorySubmit = (e: React.FormEvent) => {
@@ -747,89 +1026,149 @@ export default function RestaurantPage() {
         {/* ── FOOD & DRINKS MENU TAB ── */}
         <TabsContent value="menu" className="space-y-6 animate-in fade-in duration-300">
           
-          <div className="flex justify-between items-center bg-white p-4 rounded-xl border">
+          {/* Top Control Bar */}
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-2xl border shadow-sm">
             <div>
-              <h3 className="font-bold text-sm text-slate-800">Restaurant Menu Catalog</h3>
-              <p className="text-xs text-slate-400 mt-0.5">Customize food, beverages, price catalog, and availability.</p>
+              <h3 className="font-extrabold text-base text-slate-800 flex items-center gap-2">
+                Restaurant Menu Catalog
+                <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-100 border-none font-bold text-xs">
+                  {menuItems.length} items
+                </Badge>
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">Customize dishes, drinks, custom category groups, and bulk catalog import.</p>
             </div>
             
-            {/* Add Menu Item Trigger */}
-            <Dialog open={isAddMenuOpen} onOpenChange={setIsAddMenuOpen}>
-              <DialogTrigger render={
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white font-bold" onClick={() => {
-                  setMenuForm({ name: '', category: 'Starters', price: '', description: '', isAvailable: true });
-                }}>
-                  <Plus className="w-4 h-4 mr-2" /> Add Menu Item
-                </Button>
-              } />
-              <DialogContent className="sm:max-w-[450px]">
-                <DialogHeader>
-                  <DialogTitle>Add Menu Item</DialogTitle>
-                  <DialogDescription>Add a new dish or drink to the restaurant catalog.</DialogDescription>
-                </DialogHeader>
-                <form onSubmit={handleAddMenuSubmit} className="space-y-4 py-3">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="menuName">Name</Label>
-                    <Input id="menuName" placeholder="e.g. Garlic Herb Pasta" value={menuForm.name} onChange={e => setMenuForm({...menuForm, name: e.target.value})} required />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="menuCategory">Category / Group</Label>
-                      <select id="menuCategory" value={menuForm.category} onChange={e => setMenuForm({...menuForm, category: e.target.value})} className="flex h-10 w-full rounded-md border bg-slate-50 px-3 py-2 text-sm outline-none">
-                        <option value="Starters">Starters</option>
-                        <option value="Mains">Mains</option>
-                        <option value="Drinks">Drinks</option>
-                        <option value="Desserts">Desserts</option>
-                      </select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="menuPrice">Price (₹)</Label>
-                      <Input id="menuPrice" type="number" step="any" min="0" placeholder="0.00" value={menuForm.price} onChange={e => setMenuForm({...menuForm, price: e.target.value})} required />
-                    </div>
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="menuDesc">Description</Label>
-                    <textarea id="menuDesc" placeholder="Describe the dish ingredients..." rows={3} value={menuForm.description} onChange={e => setMenuForm({...menuForm, description: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-md p-3 text-xs outline-none focus:ring-1 focus:ring-blue-500" />
-                  </div>
-                  <div className="flex items-center gap-2 pt-2">
-                    <input type="checkbox" id="menuAvail" checked={menuForm.isAvailable} onChange={e => setMenuForm({...menuForm, isAvailable: e.target.checked})} className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4" />
-                    <Label htmlFor="menuAvail" className="text-xs font-bold text-slate-700 cursor-pointer">Available for Ordering</Label>
-                  </div>
-                  <DialogFooter className="pt-4">
-                    <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white w-full">Save Item</Button>
-                  </DialogFooter>
-                </form>
-              </DialogContent>
-            </Dialog>
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              {/* Manage Categories Trigger */}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="font-bold text-xs border-slate-200 text-slate-700 hover:bg-slate-50 rounded-xl"
+                onClick={() => setIsManageCategoriesOpen(true)}
+              >
+                <Settings2 className="w-3.5 h-3.5 mr-1.5 text-slate-500" />
+                Categories
+                <span className="ml-1.5 px-1.5 py-0.5 text-[10px] font-extrabold rounded-md bg-slate-100 text-slate-700">
+                  {categoryNames.length}
+                </span>
+              </Button>
+
+              {/* Bulk Upload Trigger */}
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="font-bold text-xs border-blue-200 text-blue-700 hover:bg-blue-50 bg-blue-50/40 rounded-xl"
+                onClick={() => {
+                  setBulkRows([]);
+                  setBulkPasteText('');
+                  setBulkFileName('');
+                  setIsBulkUploadOpen(true);
+                }}
+              >
+                <UploadCloud className="w-3.5 h-3.5 mr-1.5 text-blue-600" />
+                Bulk Upload
+              </Button>
+
+              {/* Add Menu Item Trigger */}
+              <Button 
+                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs rounded-xl shadow-sm"
+                size="sm"
+                onClick={() => {
+                  setMenuForm({ 
+                    name: '', 
+                    category: categoryNames[0] || 'Starters', 
+                    price: '', 
+                    description: '', 
+                    isAvailable: true 
+                  });
+                  setShowQuickAddCat(false);
+                  setIsAddMenuOpen(true);
+                }}
+              >
+                <Plus className="w-3.5 h-3.5 mr-1.5" />
+                Add Menu Item
+              </Button>
+            </div>
           </div>
 
           {/* Easy Navigation Category Badges */}
           <div className="flex items-center gap-2 overflow-x-auto pb-1.5">
             <span className="text-xs font-black text-slate-400 uppercase tracking-widest mr-2 flex items-center gap-1 shrink-0">
-              <Layers size={13} /> Filter Groups:
+              <Layers size={13} /> Filter:
             </span>
-            {menuCategories.map(cat => (
-              <Button
-                key={cat}
-                variant={selectedCategoryFilter === cat ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setSelectedCategoryFilter(cat)}
-                className={`font-bold font-sans text-xs rounded-xl shadow-none shrink-0 ${
-                  selectedCategoryFilter === cat 
-                    ? 'bg-blue-600 hover:bg-blue-700 text-white' 
-                    : 'text-slate-500 border-slate-200 hover:bg-slate-50'
-                }`}
-              >
-                {cat}
-              </Button>
-            ))}
+            {menuCategories.map(cat => {
+              const count = cat === 'All' 
+                ? menuItems.length 
+                : menuItems.filter((m: any) => m.category === cat).length;
+              return (
+                <Button
+                  key={cat}
+                  variant={selectedCategoryFilter === cat ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setSelectedCategoryFilter(cat)}
+                  className={`font-bold font-sans text-xs rounded-xl shadow-none shrink-0 flex items-center gap-1.5 ${
+                    selectedCategoryFilter === cat 
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+                      : 'text-slate-600 border-slate-200 hover:bg-slate-50 bg-white'
+                  }`}
+                >
+                  <span>{cat}</span>
+                  <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                    selectedCategoryFilter === cat 
+                      ? 'bg-white/20 text-white' 
+                      : 'bg-slate-100 text-slate-600'
+                  }`}>
+                    {count}
+                  </span>
+                </Button>
+              );
+            })}
+
+            {/* Inline button to quickly open Category Manager */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsManageCategoriesOpen(true)}
+              className="text-xs font-bold text-blue-600 hover:bg-blue-50 rounded-xl shrink-0 flex items-center gap-1"
+            >
+              <FolderPlus size={13} /> + Add Category
+            </Button>
           </div>
 
           {/* Menu items card list */}
           {menuLoading ? (
             <div className="p-8 text-center text-slate-400 animate-pulse italic text-xs">Loading menu items...</div>
           ) : filteredMenuItems.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 italic text-xs bg-white rounded-2xl border">No menu items found in this category group.</div>
+            <div className="p-12 text-center text-slate-400 italic text-xs bg-white rounded-2xl border space-y-3">
+              <p>No menu items found in this category.</p>
+              <div className="flex justify-center gap-2">
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={() => {
+                    setMenuForm({ 
+                      name: '', 
+                      category: selectedCategoryFilter !== 'All' ? selectedCategoryFilter : (categoryNames[0] || 'Starters'), 
+                      price: '', 
+                      description: '', 
+                      isAvailable: true 
+                    });
+                    setIsAddMenuOpen(true);
+                  }}
+                  className="font-bold text-xs text-blue-600"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" /> Add Dish Here
+                </Button>
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  onClick={() => setIsBulkUploadOpen(true)}
+                  className="font-bold text-xs"
+                >
+                  <UploadCloud className="w-3.5 h-3.5 mr-1" /> Bulk Upload Dishes
+                </Button>
+              </div>
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
               {filteredMenuItems.map((item: any) => (
@@ -837,12 +1176,7 @@ export default function RestaurantPage() {
                   <CardHeader className="pb-3 border-b bg-slate-50/50">
                     <div className="flex justify-between items-start">
                       <div>
-                        <Badge className={`font-black font-sans uppercase text-[9px] border-none tracking-wide ${
-                          item.category === 'Starters' ? 'bg-amber-100 text-amber-700' :
-                          item.category === 'Mains' ? 'bg-blue-100 text-blue-700' :
-                          item.category === 'Drinks' ? 'bg-teal-100 text-teal-700' :
-                          'bg-purple-100 text-purple-700'
-                        }`}>
+                        <Badge className={`font-black font-sans uppercase text-[9px] border-none tracking-wide ${getCategoryBadgeClass(item.category)}`}>
                           {item.category}
                         </Badge>
                         <h4 className="font-extrabold text-sm text-slate-800 mt-2">{item.name}</h4>
@@ -911,6 +1245,89 @@ export default function RestaurantPage() {
             </div>
           )}
 
+          {/* Add Menu Item Dialog */}
+          <Dialog open={isAddMenuOpen} onOpenChange={setIsAddMenuOpen}>
+            <DialogContent className="sm:max-w-[450px]">
+              <DialogHeader>
+                <DialogTitle>Add Menu Item</DialogTitle>
+                <DialogDescription>Add a new dish or drink to the restaurant catalog.</DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleAddMenuSubmit} className="space-y-4 py-3">
+                <div className="space-y-1.5">
+                  <Label htmlFor="menuName">Name</Label>
+                  <Input id="menuName" placeholder="e.g. Garlic Herb Pasta" value={menuForm.name} onChange={e => setMenuForm({...menuForm, name: e.target.value})} required />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between items-center">
+                      <Label htmlFor="menuCategory">Category / Group</Label>
+                      <button 
+                        type="button" 
+                        onClick={() => setShowQuickAddCat(!showQuickAddCat)} 
+                        className="text-[10px] font-bold text-blue-600 hover:underline"
+                      >
+                        {showQuickAddCat ? 'Select existing' : '+ New Category'}
+                      </button>
+                    </div>
+
+                    {showQuickAddCat ? (
+                      <div className="flex items-center gap-1.5">
+                        <Input 
+                          placeholder="Category name"
+                          value={quickCatName}
+                          onChange={(e) => setQuickCatName(e.target.value)}
+                          className="h-10 text-xs"
+                          autoFocus
+                        />
+                        <Button 
+                          type="button" 
+                          size="sm" 
+                          className="h-10 px-2.5 bg-blue-600 hover:bg-blue-700 text-white"
+                          disabled={!quickCatName.trim() || addCategoryMutation.isPending}
+                          onClick={() => {
+                            if (quickCatName.trim()) {
+                              addCategoryMutation.mutate(quickCatName.trim());
+                            }
+                          }}
+                        >
+                          <Plus size={14} />
+                        </Button>
+                      </div>
+                    ) : (
+                      <select 
+                        id="menuCategory" 
+                        value={menuForm.category} 
+                        onChange={e => setMenuForm({...menuForm, category: e.target.value})} 
+                        className="flex h-10 w-full rounded-md border bg-slate-50 px-3 py-2 text-sm outline-none"
+                      >
+                        {categoryNames.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="menuPrice">Price (₹)</Label>
+                    <Input id="menuPrice" type="number" step="any" min="0" placeholder="0.00" value={menuForm.price} onChange={e => setMenuForm({...menuForm, price: e.target.value})} required />
+                  </div>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="menuDesc">Description</Label>
+                  <textarea id="menuDesc" placeholder="Describe dish ingredients, spices, allergens..." rows={3} value={menuForm.description} onChange={e => setMenuForm({...menuForm, description: e.target.value})} className="w-full bg-slate-50 border border-slate-200 rounded-md p-3 text-xs outline-none focus:ring-1 focus:ring-blue-500" />
+                </div>
+                <div className="flex items-center gap-2 pt-2">
+                  <input type="checkbox" id="menuAvail" checked={menuForm.isAvailable} onChange={e => setMenuForm({...menuForm, isAvailable: e.target.checked})} className="rounded text-blue-600 focus:ring-blue-500 w-4 h-4" />
+                  <Label htmlFor="menuAvail" className="text-xs font-bold text-slate-700 cursor-pointer">Available for Ordering</Label>
+                </div>
+                <DialogFooter className="pt-4">
+                  <Button type="submit" disabled={addMenuItemMutation.isPending} className="bg-blue-600 hover:bg-blue-700 text-white w-full">
+                    {addMenuItemMutation.isPending ? 'Saving...' : 'Save Item'}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
           {/* Edit Menu Item Dialog */}
           <Dialog open={isEditMenuOpen} onOpenChange={(open) => !open && setIsEditMenuOpen(false)}>
             <DialogContent className="sm:max-w-[450px]">
@@ -925,13 +1342,52 @@ export default function RestaurantPage() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <Label htmlFor="editMenuCategory">Category / Group</Label>
-                    <select id="editMenuCategory" value={menuForm.category} onChange={e => setMenuForm({...menuForm, category: e.target.value})} className="flex h-10 w-full rounded-md border bg-slate-50 px-3 py-2 text-sm outline-none">
-                      <option value="Starters">Starters</option>
-                      <option value="Mains">Mains</option>
-                      <option value="Drinks">Drinks</option>
-                      <option value="Desserts">Desserts</option>
-                    </select>
+                    <div className="flex justify-between items-center">
+                      <Label htmlFor="editMenuCategory">Category / Group</Label>
+                      <button 
+                        type="button" 
+                        onClick={() => setShowQuickAddCat(!showQuickAddCat)} 
+                        className="text-[10px] font-bold text-blue-600 hover:underline"
+                      >
+                        {showQuickAddCat ? 'Select existing' : '+ New Category'}
+                      </button>
+                    </div>
+
+                    {showQuickAddCat ? (
+                      <div className="flex items-center gap-1.5">
+                        <Input 
+                          placeholder="Category name"
+                          value={quickCatName}
+                          onChange={(e) => setQuickCatName(e.target.value)}
+                          className="h-10 text-xs"
+                          autoFocus
+                        />
+                        <Button 
+                          type="button" 
+                          size="sm" 
+                          className="h-10 px-2.5 bg-blue-600 hover:bg-blue-700 text-white"
+                          disabled={!quickCatName.trim() || addCategoryMutation.isPending}
+                          onClick={() => {
+                            if (quickCatName.trim()) {
+                              addCategoryMutation.mutate(quickCatName.trim());
+                            }
+                          }}
+                        >
+                          <Plus size={14} />
+                        </Button>
+                      </div>
+                    ) : (
+                      <select 
+                        id="editMenuCategory" 
+                        value={menuForm.category} 
+                        onChange={e => setMenuForm({...menuForm, category: e.target.value})} 
+                        className="flex h-10 w-full rounded-md border bg-slate-50 px-3 py-2 text-sm outline-none"
+                      >
+                        {categoryNames.map(cat => (
+                          <option key={cat} value={cat}>{cat}</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="editMenuPrice">Price (₹)</Label>
@@ -952,6 +1408,393 @@ export default function RestaurantPage() {
                   </Button>
                 </DialogFooter>
               </form>
+            </DialogContent>
+          </Dialog>
+
+          {/* Manage Categories Dialog */}
+          <Dialog open={isManageCategoriesOpen} onOpenChange={setIsManageCategoriesOpen}>
+            <DialogContent className="sm:max-w-[500px]">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Settings2 className="w-5 h-5 text-blue-600" />
+                  Manage Menu Categories
+                </DialogTitle>
+                <DialogDescription>
+                  Add custom categories or remove existing categories (including Starters, Mains, Drinks, Desserts).
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2">
+                {/* Add Category Form */}
+                <form 
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (newCategoryName.trim()) {
+                      addCategoryMutation.mutate(newCategoryName.trim());
+                    }
+                  }} 
+                  className="flex items-center gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200"
+                >
+                  <Input 
+                    placeholder="e.g. Soups, Tandoori, Breads, Chinese..."
+                    value={newCategoryName}
+                    onChange={(e) => setNewCategoryName(e.target.value)}
+                    className="bg-white text-xs h-9"
+                    required
+                  />
+                  <Button 
+                    type="submit" 
+                    size="sm" 
+                    disabled={!newCategoryName.trim() || addCategoryMutation.isPending}
+                    className="bg-blue-600 hover:bg-blue-700 text-white font-bold shrink-0 h-9"
+                  >
+                    <Plus className="w-3.5 h-3.5 mr-1" /> Add Category
+                  </Button>
+                </form>
+
+                {/* Categories List */}
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                  <Label className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Current Categories ({categoryNames.length})
+                  </Label>
+                  
+                  {categoryNames.length === 0 ? (
+                    <div className="p-4 text-center text-xs text-slate-400 italic">No categories found. Add one above!</div>
+                  ) : (
+                    <div className="divide-y divide-slate-100 border rounded-xl overflow-hidden bg-white">
+                      {categoryNames.map(cat => {
+                        const count = menuItems.filter((m: any) => m.category === cat).length;
+                        return (
+                          <div key={cat} className="p-3 flex items-center justify-between hover:bg-slate-50/70 transition">
+                            <div className="flex items-center gap-2.5">
+                              <Badge className={`font-black font-sans uppercase text-[9px] border-none tracking-wide ${getCategoryBadgeClass(cat)}`}>
+                                {cat}
+                              </Badge>
+                              <span className="text-xs text-slate-500 font-medium">
+                                {count} {count === 1 ? 'dish' : 'dishes'}
+                              </span>
+                            </div>
+
+                            <Button 
+                              size="sm" 
+                              variant="ghost" 
+                              className="text-slate-400 hover:text-red-600 hover:bg-red-50 h-8 w-8 p-0"
+                              onClick={() => {
+                                setCategoryToDelete({ name: cat, itemCount: count });
+                                setDeleteItemAction('reassign');
+                              }}
+                              title="Delete Category"
+                            >
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <DialogFooter className="pt-2">
+                <Button 
+                  variant="outline" 
+                  onClick={() => setIsManageCategoriesOpen(false)}
+                  className="w-full text-xs font-bold"
+                >
+                  Close
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Delete Category Confirmation Dialog */}
+          <Dialog open={!!categoryToDelete} onOpenChange={(open) => !open && setCategoryToDelete(null)}>
+            <DialogContent className="sm:max-w-[440px]">
+              <DialogHeader>
+                <DialogTitle className="text-red-600 flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5" />
+                  Delete Category "{categoryToDelete?.name}"
+                </DialogTitle>
+                <DialogDescription>
+                  {categoryToDelete?.itemCount && categoryToDelete.itemCount > 0 ? (
+                    <span>This category contains <strong>{categoryToDelete.itemCount} dish(es)</strong>. Please choose how to handle them:</span>
+                  ) : (
+                    <span>Are you sure you want to delete this category?</span>
+                  )}
+                </DialogDescription>
+              </DialogHeader>
+
+              {categoryToDelete && categoryToDelete.itemCount > 0 ? (
+                <div className="space-y-3 py-3 text-xs">
+                  <label className="flex items-start gap-2.5 p-3 rounded-xl border border-slate-200 cursor-pointer hover:bg-slate-50 transition">
+                    <input 
+                      type="radio" 
+                      name="deleteItemAction" 
+                      checked={deleteItemAction === 'reassign'} 
+                      onChange={() => setDeleteItemAction('reassign')}
+                      className="mt-0.5 text-blue-600 focus:ring-blue-500"
+                    />
+                    <div>
+                      <p className="font-bold text-slate-800">Move dishes to "General" (Recommended)</p>
+                      <p className="text-slate-500 text-[11px] mt-0.5">Keeps all {categoryToDelete.itemCount} dishes in your menu catalog under a general group.</p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-start gap-2.5 p-3 rounded-xl border border-red-200 bg-red-50/20 cursor-pointer hover:bg-red-50/40 transition">
+                    <input 
+                      type="radio" 
+                      name="deleteItemAction" 
+                      checked={deleteItemAction === 'delete'} 
+                      onChange={() => setDeleteItemAction('delete')}
+                      className="mt-0.5 text-red-600 focus:ring-red-500"
+                    />
+                    <div>
+                      <p className="font-bold text-red-700">Delete all {categoryToDelete.itemCount} dishes</p>
+                      <p className="text-red-500 text-[11px] mt-0.5">Permanently deletes this category AND all dishes associated with it.</p>
+                    </div>
+                  </label>
+                </div>
+              ) : null}
+
+              <DialogFooter className="gap-2 pt-2">
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setCategoryToDelete(null)}
+                  disabled={deleteCategoryMutation.isPending}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  size="sm"
+                  disabled={deleteCategoryMutation.isPending}
+                  onClick={() => {
+                    if (categoryToDelete) {
+                      deleteCategoryMutation.mutate({
+                        name: categoryToDelete.name,
+                        deleteItems: deleteItemAction === 'delete'
+                      });
+                    }
+                  }}
+                >
+                  {deleteCategoryMutation.isPending ? 'Deleting...' : 'Confirm Delete'}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Bulk Upload Menu Dialog */}
+          <Dialog open={isBulkUploadOpen} onOpenChange={setIsBulkUploadOpen}>
+            <DialogContent className="sm:max-w-[700px] max-h-[90vh] flex flex-col">
+              <DialogHeader>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                  <DialogTitle className="flex items-center gap-2">
+                    <UploadCloud className="w-5 h-5 text-blue-600" />
+                    Bulk Upload Menu Catalog
+                  </DialogTitle>
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    size="sm" 
+                    className="text-xs font-bold text-slate-600 border-slate-200 h-8"
+                    onClick={downloadCSVTemplate}
+                  >
+                    <Download className="w-3.5 h-3.5 mr-1 text-slate-500" /> Download Sample CSV
+                  </Button>
+                </div>
+                <DialogDescription>
+                  Upload a CSV file or paste tabular data with columns: <strong>Name</strong>, <strong>Category</strong>, and <strong>Price</strong>.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 py-2 flex-1 overflow-y-auto">
+                {/* Mode Selector Tabs */}
+                <div className="flex border-b">
+                  <button 
+                    type="button"
+                    onClick={() => setBulkUploadTab('file')}
+                    className={`pb-2 px-4 text-xs font-bold border-b-2 flex items-center gap-1.5 transition ${
+                      bulkUploadTab === 'file' 
+                        ? 'border-blue-600 text-blue-600' 
+                        : 'border-transparent text-slate-400 hover:text-slate-600'
+                    }`}
+                  >
+                    <FileUp size={14} /> Upload CSV File
+                  </button>
+                  <button 
+                    type="button"
+                    onClick={() => setBulkUploadTab('paste')}
+                    className={`pb-2 px-4 text-xs font-bold border-b-2 flex items-center gap-1.5 transition ${
+                      bulkUploadTab === 'paste' 
+                        ? 'border-blue-600 text-blue-600' 
+                        : 'border-transparent text-slate-400 hover:text-slate-600'
+                    }`}
+                  >
+                    <FileSpreadsheet size={14} /> Copy-Paste from Excel / Sheets
+                  </button>
+                </div>
+
+                {bulkUploadTab === 'file' ? (
+                  <div className="border-2 border-dashed border-slate-200 rounded-2xl p-6 text-center hover:bg-slate-50/50 transition flex flex-col items-center justify-center space-y-2">
+                    <div className="w-12 h-12 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center">
+                      <UploadCloud size={24} />
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-700">Choose a .CSV file or drag and drop</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">Columns: Name, Category, Price, Description (optional)</p>
+                    </div>
+                    <label className="cursor-pointer">
+                      <span className="inline-flex items-center gap-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition">
+                        Browse File
+                      </span>
+                      <input 
+                        type="file" 
+                        accept=".csv,text/csv" 
+                        onChange={handleCSVFileUpload}
+                        className="hidden" 
+                      />
+                    </label>
+                    {bulkFileName && (
+                      <p className="text-xs text-blue-600 font-bold mt-1">Loaded: {bulkFileName}</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="pasteBox" className="text-xs text-slate-600">
+                      Paste rows directly from Excel or Google Sheets (Tab or comma separated):
+                    </Label>
+                    <textarea 
+                      id="pasteBox"
+                      rows={5}
+                      placeholder={`Garlic Naan\tBreads\t60\tClay oven flatbread\nPaneer Tikka\tStarters\t250\tMarinated cottage cheese`}
+                      value={bulkPasteText}
+                      onChange={(e) => setBulkPasteText(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-mono text-xs outline-none focus:ring-1 focus:ring-blue-500"
+                    />
+                    <div className="flex justify-end">
+                      <Button 
+                        type="button" 
+                        size="sm" 
+                        onClick={handlePasteParse}
+                        disabled={!bulkPasteText.trim()}
+                        className="text-xs bg-slate-800 hover:bg-slate-900 text-white font-bold"
+                      >
+                        Parse & Preview Data
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Live Preview Table */}
+                {bulkRows.length > 0 && (
+                  <div className="space-y-3 pt-2 border-t">
+                    <div className="flex justify-between items-center text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-slate-800">Preview Data ({bulkRows.length} rows)</span>
+                        <Badge className="bg-emerald-100 text-emerald-800 border-none font-bold text-[10px]">
+                          {bulkRows.filter(r => r.isValid).length} Valid
+                        </Badge>
+                        {bulkRows.some(r => !r.isValid) && (
+                          <Badge className="bg-red-100 text-red-700 border-none font-bold text-[10px]">
+                            {bulkRows.filter(r => !r.isValid).length} Errors
+                          </Badge>
+                        )}
+                        {bulkRows.some(r => r.isNewCategory) && (
+                          <Badge className="bg-blue-100 text-blue-700 border-none font-bold text-[10px]">
+                            {Array.from(new Set(bulkRows.filter(r => r.isNewCategory).map(r => r.category))).length} New Categories
+                          </Badge>
+                        )}
+                      </div>
+                      <button 
+                        type="button" 
+                        onClick={() => setBulkRows([])} 
+                        className="text-slate-400 hover:text-red-500 text-[11px] font-bold"
+                      >
+                        Clear All
+                      </button>
+                    </div>
+
+                    <div className="border rounded-xl overflow-hidden max-h-[220px] overflow-y-auto">
+                      <table className="w-full border-collapse text-left text-xs">
+                        <thead>
+                          <tr className="bg-slate-50 border-b font-bold text-slate-500 sticky top-0">
+                            <th className="p-2.5 pl-3">#</th>
+                            <th className="p-2.5">Name</th>
+                            <th className="p-2.5">Category</th>
+                            <th className="p-2.5">Price (₹)</th>
+                            <th className="p-2.5">Description</th>
+                            <th className="p-2.5">Status</th>
+                            <th className="p-2.5 text-right pr-3">Remove</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {bulkRows.map((row, idx) => (
+                            <tr key={row.id} className={`hover:bg-slate-50/50 ${!row.isValid ? 'bg-red-50/30' : ''}`}>
+                              <td className="p-2.5 pl-3 font-mono text-slate-400 text-[10px]">{idx + 1}</td>
+                              <td className="p-2.5 font-bold text-slate-800">{row.name || <span className="text-red-400 italic">Empty</span>}</td>
+                              <td className="p-2.5">
+                                <span className="inline-flex items-center gap-1 font-semibold text-slate-700">
+                                  {row.category}
+                                  {row.isNewCategory && (
+                                    <span className="text-[9px] bg-blue-100 text-blue-700 font-bold px-1 rounded" title="Will be auto-created as a new category">
+                                      new
+                                    </span>
+                                  )}
+                                </span>
+                              </td>
+                              <td className="p-2.5 font-mono font-bold text-slate-800">
+                                {row.price ? `₹${parseFloat(row.price).toFixed(2)}` : <span className="text-red-400 italic">Invalid</span>}
+                              </td>
+                              <td className="p-2.5 text-slate-500 text-[11px] truncate max-w-[140px]">{row.description || '-'}</td>
+                              <td className="p-2.5">
+                                {row.isValid ? (
+                                  <span className="inline-flex items-center text-emerald-600 text-[11px] font-bold gap-1">
+                                    <Check size={13} /> OK
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center text-red-500 text-[11px] font-bold gap-1" title={row.error}>
+                                    <X size={13} /> {row.error}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-2.5 text-right pr-3">
+                                <button 
+                                  type="button" 
+                                  onClick={() => handleRemoveBulkRow(row.id)}
+                                  className="text-slate-400 hover:text-red-600 p-1"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <DialogFooter className="gap-2 pt-4 border-t">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => setIsBulkUploadOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button 
+                  type="button" 
+                  size="sm"
+                  disabled={bulkRows.filter(r => r.isValid).length === 0 || bulkUploadMenuMutation.isPending}
+                  onClick={handleExecuteBulkUpload}
+                  className="bg-blue-600 hover:bg-blue-700 text-white font-bold"
+                >
+                  {bulkUploadMenuMutation.isPending ? 'Importing...' : `Import ${bulkRows.filter(r => r.isValid).length} Valid Dishes`}
+                </Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
         </TabsContent>

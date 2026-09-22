@@ -583,7 +583,7 @@ export default function GuestPortalPage() {
 
             {/* Menu Sections */}
             <div className="space-y-5">
-              {['Starters', 'Mains', 'Drinks', 'Desserts'].map(cat => {
+              {Array.from(new Set(menuItems.map((m: any) => m.category as string).filter(Boolean))).map(cat => {
                 const items = menuItems.filter(m => m.category === cat);
                 if (items.length === 0) return null;
                 return (

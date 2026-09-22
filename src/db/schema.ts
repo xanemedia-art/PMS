@@ -226,7 +226,10 @@ export const bookingExpenses = pgTable('booking_expenses', {
   createdAt: timestamp('created_at').defaultNow(),
 });
 
-
-
-
-
+// 18. Restaurant Menu Categories
+export const restaurantCategories = pgTable('restaurant_categories', {
+  id: serial('id').primaryKey(),
+  hotelId: integer('hotel_id').references(() => hotels.id).notNull(),
+  name: text('name').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
