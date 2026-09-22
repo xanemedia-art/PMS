@@ -86,11 +86,31 @@ function MainRoutes() {
     checkSub();
     const interval = setInterval(checkSub, 30000);
 
-    // Setup global fetch interceptor for 402 responses
+    // Setup global fetch interceptor for 401 (Session Expired) & 402 (Subscription Expired) responses
     const originalFetch = window.fetch;
     window.fetch = async (...args) => {
       const response = await originalFetch(...args);
-      if (response.status === 402) {
+      if (response.status === 401) {
+        const urlStr = typeof args[0] === 'string' ? args[0] : (args[0] as Request)?.url || '';
+        // Only trigger session reset if not on a dedicated auth or public endpoint
+        if (
+          !urlStr.includes('/api/auth/login') &&
+          !urlStr.includes('/api/super-admin/login') &&
+          !urlStr.includes('/api/guest/login') &&
+          !urlStr.includes('/public/table/charge-to-room')
+        ) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          if (
+            window.location.pathname !== '/login' && 
+            !window.location.pathname.startsWith('/guest') && 
+            !window.location.pathname.startsWith('/booking/') &&
+            !window.location.pathname.startsWith('/super-admin')
+          ) {
+            window.location.href = '/login';
+          }
+        }
+      } else if (response.status === 402) {
         setIsSubscriptionExpired(true);
         try {
           const clone = response.clone();
