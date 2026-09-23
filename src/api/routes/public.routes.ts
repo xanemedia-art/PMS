@@ -1,4 +1,5 @@
 import express from 'express';
+import crypto from 'crypto';
 import { db } from '../../db/index.js';
 import { hotels, plans, roomTypes, rooms, bookings, users } from '../../db/schema.js';
 import { eq, and, ne, lt, gt, inArray } from 'drizzle-orm';
@@ -247,7 +248,7 @@ router.get('/hotel/:hotelId/availability', async (req, res) => {
 router.post('/hotel/:hotelId/book', async (req, res) => {
   try {
     const hotelId = parseInt(req.params.hotelId);
-    const { roomTypeId, roomCount, planId, guestName, guestEmail, guestPhone, pax, extraBeddings, notes, checkInDate, checkOutDate, totalEstimatedAmount, amountPaid, paymentStatus } = req.body;
+    const { roomTypeId, roomCount, planId, guestName, guestEmail, guestPhone, pax, extraBeddings, notes, checkInDate, checkOutDate, totalEstimatedAmount, amountPaid, paymentStatus, guestMembers } = req.body;
 
     if (isNaN(hotelId) || !roomTypeId || !guestName || !checkInDate || !checkOutDate) {
         res.status(400).json({ error: 'Missing required parameters' });
@@ -330,7 +331,9 @@ router.post('/hotel/:hotelId/book', async (req, res) => {
           totalEstimatedAmount: perRoomEstimated,
           amountPaid: 0,
           paymentMethod: 'pay_at_checkout',
-          notes: notes || null
+          notes: notes || null,
+          guestMembers: guestMembers ? (typeof guestMembers === 'string' ? guestMembers : JSON.stringify(guestMembers)) : null,
+          selfCheckInToken: crypto.randomUUID(),
         });
     }
 
@@ -396,11 +399,146 @@ router.post('/hotel/:hotelId/book', async (req, res) => {
       })();
     }
 
-    res.json(newBookings[0]);
+    res.json({
+      ...newBookings[0],
+      checkInUrl: newBookings[0].selfCheckInToken ? `/checkin/${newBookings[0].selfCheckInToken}` : null
+    });
 
   } catch (error) {
     console.error('Create booking error:', error);
     res.status(500).json({ error: 'Failed to create booking' });
+  }
+});
+
+// GET /api/public/checkin/:token
+router.get('/checkin/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    if (!token) {
+      res.status(400).json({ error: 'Check-in token is required' });
+      return;
+    }
+
+    const bookingResult = await db.select({
+      booking: bookings,
+      hotel: hotels,
+      roomType: roomTypes,
+      plan: plans,
+      room: rooms
+    })
+    .from(bookings)
+    .innerJoin(hotels, eq(bookings.hotelId, hotels.id))
+    .leftJoin(roomTypes, eq(bookings.roomTypeId, roomTypes.id))
+    .leftJoin(plans, eq(bookings.planId, plans.id))
+    .leftJoin(rooms, eq(bookings.roomId, rooms.id))
+    .where(eq(bookings.selfCheckInToken, token))
+    .limit(1);
+
+    if (bookingResult.length === 0) {
+      res.status(404).json({ error: 'Reservation not found or check-in link has expired' });
+      return;
+    }
+
+    const row = bookingResult[0];
+    let members = [];
+    if (row.booking.guestMembers) {
+      try {
+        members = JSON.parse(row.booking.guestMembers);
+      } catch {}
+    }
+
+    let checkInDetails = null;
+    if (row.booking.checkInDetails) {
+      try {
+        checkInDetails = JSON.parse(row.booking.checkInDetails);
+      } catch {}
+    }
+
+    res.json({
+      booking: {
+        id: row.booking.id,
+        guestName: row.booking.guestName,
+        guestEmail: row.booking.guestEmail,
+        guestPhone: row.booking.guestPhone,
+        checkInDate: row.booking.checkInDate,
+        checkOutDate: row.booking.checkOutDate,
+        pax: row.booking.pax,
+        roomCount: row.booking.roomCount,
+        status: row.booking.status,
+        paymentStatus: row.booking.paymentStatus,
+        totalEstimatedAmount: row.booking.totalEstimatedAmount,
+        amountPaid: row.booking.amountPaid,
+        roomTypeName: row.roomType?.name || 'Sanctuary Suite',
+        planName: row.plan?.name || 'Standard Rate',
+        roomNumber: row.room?.number || null,
+        guestMembers: members,
+        checkInDetails: checkInDetails,
+        selfCheckInCompleted: !!checkInDetails?.selfCheckInCompleted,
+        selfCheckInToken: row.booking.selfCheckInToken
+      },
+      hotel: {
+        id: row.hotel.id,
+        name: row.hotel.name,
+        address: row.hotel.address,
+        slug: row.hotel.slug,
+        billingStateName: row.hotel.billingStateName
+      }
+    });
+  } catch (error) {
+    console.error('Fetch check-in error:', error);
+    res.status(500).json({ error: 'Failed to retrieve check-in details' });
+  }
+});
+
+// POST /api/public/checkin/:token
+router.post('/checkin/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const { guestMembers, checkInDetails } = req.body;
+
+    if (!token) {
+      res.status(400).json({ error: 'Check-in token is required' });
+      return;
+    }
+
+    const existing = await db.select().from(bookings).where(eq(bookings.selfCheckInToken, token)).limit(1);
+    if (existing.length === 0) {
+      res.status(404).json({ error: 'Reservation not found' });
+      return;
+    }
+
+    const booking = existing[0];
+
+    const updatedCheckInDetails = {
+      ...checkInDetails,
+      selfCheckInCompleted: true,
+      completedAt: new Date().toISOString()
+    };
+
+    const updatePayload: any = {
+      checkInDetails: JSON.stringify(updatedCheckInDetails)
+    };
+
+    if (guestMembers) {
+      updatePayload.guestMembers = typeof guestMembers === 'string' ? guestMembers : JSON.stringify(guestMembers);
+    }
+
+    // If reservation is still in pending status, confirm it upon self check-in
+    if (booking.status === 'pending') {
+      updatePayload.status = 'confirmed';
+    }
+
+    await db.update(bookings).set(updatePayload).where(eq(bookings.id, booking.id));
+
+    res.json({
+      success: true,
+      message: 'Self check-in completed successfully! Your express boarding pass is ready.',
+      bookingId: booking.id,
+      checkInDetails: updatedCheckInDetails
+    });
+  } catch (error) {
+    console.error('Submit check-in error:', error);
+    res.status(500).json({ error: 'Failed to complete self check-in' });
   }
 });
 

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import RoomCard from '../components/booking-engine/RoomCard';
-import { Calendar as CalendarIcon, Tag, BedDouble, ChevronRight, MapPin, Star, ShieldCheck, Mail, User, Phone, Users, Coffee, XCircle, Hotel } from 'lucide-react';
+import { Calendar as CalendarIcon, Tag, BedDouble, ChevronRight, MapPin, Star, ShieldCheck, Mail, User, Phone, Users, Coffee, XCircle, Hotel, QrCode, Copy, Check, Share2, Plus, Trash2, ExternalLink } from 'lucide-react';
+import { getQrCodePngUrl } from '../utils/qrCode';
 import { format, addDays } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Label } from '@/components/ui/label';
@@ -95,6 +96,10 @@ export default function BookingEnginePage() {
   const [guestEmail, setGuestEmail] = useState('');
   const [guestPhone, setGuestPhone] = useState('');
   const [specialRequests, setSpecialRequests] = useState('');
+  const [guestMembers, setGuestMembers] = useState<{ name: string; age: string; gender: string; relationship: string }[]>([]);
+  const [createdCheckInUrl, setCreatedCheckInUrl] = useState<string | null>(null);
+  const [createdBookingRef, setCreatedBookingRef] = useState<string | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [bookingSuccess, setBookingSuccess] = useState(false);
   
   // Checkout Dialog Wizard States
@@ -219,6 +224,10 @@ export default function BookingEnginePage() {
     try {
       const grandTotal = calculateTotal();
       const grandBase = calculateBaseTotal();
+      let lastCheckInUrl: string | null = null;
+      let lastBookingRef: string | null = null;
+      const validMembers = guestMembers.filter(m => m.name.trim() !== '');
+
       for (const roomId of Object.keys(selectedRooms)) {
         const rt = roomTypes.find(r => r.id === roomId);
         if (!rt) continue;
@@ -241,6 +250,7 @@ export default function BookingEnginePage() {
             guestName,
             guestEmail,
             guestPhone,
+            guestMembers: validMembers,
             pax: selectedRooms[roomId].pax,
             extraBeddings: extraBeds,
             notes: specialRequests,
@@ -253,7 +263,16 @@ export default function BookingEnginePage() {
         });
         
         if (!res.ok) throw new Error('Booking failed');
+        const resData = await res.json();
+        if (resData.checkInUrl) {
+          lastCheckInUrl = resData.checkInUrl.startsWith('http') ? resData.checkInUrl : window.location.origin + resData.checkInUrl;
+        }
+        if (resData.bookingRef) {
+          lastBookingRef = resData.bookingRef;
+        }
       }
+      if (lastCheckInUrl) setCreatedCheckInUrl(lastCheckInUrl);
+      if (lastBookingRef) setCreatedBookingRef(lastBookingRef);
       setBookingSuccess(true);
     } catch (err) {
       alert("Booking failed. Please try again.");
@@ -266,26 +285,115 @@ export default function BookingEnginePage() {
   const hasSelections = Object.keys(selectedRooms).length > 0;
 
   if (bookingSuccess) {
+    const checkInLink = createdCheckInUrl || `${window.location.origin}/guest/login`;
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <motion.div 
-          initial={{ opacity: 0, scale: 0.9 }}
+          initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-10 text-center space-y-6"
+          className="max-w-xl w-full bg-slate-950 border border-slate-800 rounded-3xl shadow-2xl overflow-hidden"
         >
-          <div className="w-20 h-20 bg-green-100 text-green-600 rounded-full flex items-center justify-center mx-auto">
-            <ShieldCheck size={40} />
+          {/* Top banner */}
+          <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-8 text-center text-white relative">
+            <div className="w-16 h-16 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mx-auto mb-3 border border-white/30 shadow-lg">
+              <ShieldCheck size={36} className="text-white" />
+            </div>
+            <h2 className="text-2xl md:text-3xl font-black tracking-tight">Reservation Confirmed!</h2>
+            <p className="text-emerald-100 text-xs mt-1 font-medium">
+              We look forward to welcoming you to {hotel?.name || 'our property'}
+            </p>
+            {createdBookingRef && (
+              <div className="mt-3 inline-block bg-black/30 backdrop-blur-md px-3 py-1 rounded-full text-xs font-mono text-emerald-200 border border-white/10">
+                Ref: #{createdBookingRef}
+              </div>
+            )}
           </div>
-          <h2 className="text-3xl font-black text-slate-900">Booking Confirmed!</h2>
-          <p className="text-slate-500 leading-relaxed">
-            Your reservation at <span className="font-bold text-slate-900">{hotel?.name}</span> has been successfully placed. A confirmation email has been sent to <span className="font-medium text-blue-600">{guestEmail}</span>.
-          </p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="w-full bg-slate-900 text-white py-4 rounded-2xl font-bold hover:bg-blue-600 transition-colors shadow-lg"
-          >
-            Make Another Booking
-          </button>
+
+          <div className="p-6 md:p-8 space-y-6">
+            {/* Guest & Stay Summary */}
+            <div className="bg-slate-900/80 rounded-2xl p-4 border border-slate-800 text-xs text-slate-300 space-y-2">
+              <div className="flex justify-between items-center">
+                <span className="text-slate-400">Primary Guest</span>
+                <span className="font-bold text-white text-sm">{guestName}</span>
+              </div>
+              <div className="flex justify-between items-center border-t border-slate-800/80 pt-2">
+                <span className="text-slate-400">Dates</span>
+                <span className="font-medium text-slate-200">{format(new Date(checkIn), 'MMM dd, yyyy')} - {format(new Date(checkOut), 'MMM dd, yyyy')}</span>
+              </div>
+              {guestMembers.filter(m => m.name.trim() !== '').length > 0 && (
+                <div className="flex justify-between items-start border-t border-slate-800/80 pt-2">
+                  <span className="text-slate-400">Co-Guests ({guestMembers.length})</span>
+                  <span className="font-medium text-slate-200 text-right">
+                    {guestMembers.map(m => m.name).join(', ')}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            {/* Express Self Check-In QR & Link Box */}
+            <div className="bg-gradient-to-b from-[#C5A880]/10 to-transparent border border-[#C5A880]/30 rounded-2xl p-6 text-center space-y-4">
+              <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#C5A880]/20 rounded-full border border-[#C5A880]/40 text-[#C5A880] text-xs font-bold uppercase tracking-wider">
+                <QrCode size={14} /> Express Self Check-In
+              </div>
+              
+              <h3 className="text-base font-bold text-white">Skip the Front Desk Queue</h3>
+              <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                Scan or share this unique link to complete required check-in formalities (ID upload & address) anytime before or upon arrival.
+              </p>
+
+              {/* QR Image */}
+              <div className="bg-white p-3 rounded-2xl inline-block shadow-xl border border-slate-700">
+                <img 
+                  src={getQrCodePngUrl(checkInLink, 280)} 
+                  alt="Express Check-In QR" 
+                  className="w-44 h-44 object-contain mx-auto" 
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(checkInLink);
+                    setCopiedLink(true);
+                    setTimeout(() => setCopiedLink(false), 2500);
+                  }}
+                  className="flex-1 bg-slate-900 hover:bg-slate-800 text-slate-200 border border-slate-700 py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors"
+                >
+                  {copiedLink ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                  {copiedLink ? 'Link Copied!' : 'Copy Check-In Link'}
+                </button>
+
+                <button
+                  onClick={() => {
+                    const waText = encodeURIComponent(`Hi ${guestName}, your reservation at ${hotel?.name || 'our hotel'} is confirmed! Complete your Express Self Check-In online here: ${checkInLink}`);
+                    window.open(`https://wa.me/?text=${waText}`, '_blank');
+                  }}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-colors shadow-md"
+                >
+                  <Share2 size={14} /> Share on WhatsApp
+                </button>
+              </div>
+
+              <div>
+                <a
+                  href={checkInLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-[#C5A880] hover:underline font-semibold"
+                >
+                  Open Express Check-In Form Now <ExternalLink size={12} />
+                </a>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => window.location.reload()}
+              className="w-full bg-slate-900 border border-slate-800 text-slate-300 py-3 rounded-xl font-bold hover:bg-slate-800 transition-colors text-sm"
+            >
+              Make Another Booking
+            </button>
+          </div>
         </motion.div>
       </div>
     );
@@ -435,7 +543,11 @@ export default function BookingEnginePage() {
                 <div>
                   <h2 className="text-2xl font-black text-slate-900">Complete Your Reservation</h2>
                   <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">
-                    Step {dialogStep} of 3: {dialogStep === 1 ? 'Review Stay' : dialogStep === 2 ? 'Guest Details' : 'Confirm'}
+                    Step {dialogStep} of 4: {
+                      dialogStep === 1 ? 'Review Stay' :
+                      dialogStep === 2 ? 'Guest Details' :
+                      dialogStep === 3 ? 'Accompanying Members' : 'Confirm & Pay'
+                    }
                   </p>
                 </div>
                 <button 
@@ -448,7 +560,11 @@ export default function BookingEnginePage() {
 
               {/* Step indicator bar */}
               <div className="w-full bg-slate-100 h-1 flex">
-                <div className={`h-full bg-blue-600 transition-all duration-300 ${dialogStep === 1 ? 'w-1/3' : dialogStep === 2 ? 'w-2/3' : 'w-full'}`} />
+                <div className={`h-full bg-blue-600 transition-all duration-300 ${
+                  dialogStep === 1 ? 'w-1/4' :
+                  dialogStep === 2 ? 'w-2/4' :
+                  dialogStep === 3 ? 'w-3/4' : 'w-full'
+                }`} />
               </div>
 
               {/* Scrollable Content */}
@@ -547,7 +663,7 @@ export default function BookingEnginePage() {
 
                 {dialogStep === 2 && (
                   <div className="space-y-4">
-                    <h3 className="text-lg font-bold text-slate-800">Guest Contact Info</h3>
+                    <h3 className="text-lg font-bold text-slate-800">Primary Guest Contact Info</h3>
                     <div className="space-y-4">
                       <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 ml-1">Full Name</label>
@@ -605,6 +721,140 @@ export default function BookingEnginePage() {
                 )}
 
                 {dialogStep === 3 && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <h3 className="text-lg font-bold text-slate-800">Accompanying Members</h3>
+                        <p className="text-xs text-slate-500">
+                          Add details for co-guests staying in your reservation for express check-in.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGuestMembers(prev => [...prev, { name: '', age: '', gender: 'Male', relationship: 'Spouse' }]);
+                        }}
+                        className="px-3 py-1.5 bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                      >
+                        <Plus size={14} /> Add Member
+                      </button>
+                    </div>
+
+                    {guestMembers.length === 0 ? (
+                      <div className="bg-slate-50 border border-dashed border-slate-200 rounded-2xl p-8 text-center space-y-3">
+                        <Users className="w-10 h-10 text-slate-400 mx-auto" />
+                        <div>
+                          <p className="text-sm font-bold text-slate-700">No Co-Guests Added</p>
+                          <p className="text-xs text-slate-500 max-w-xs mx-auto mt-1">
+                            Traveling solo? You can skip this step and click <span className="font-bold text-blue-600">Continue</span>.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGuestMembers(prev => [...prev, { name: '', age: '', gender: 'Male', relationship: 'Spouse' }]);
+                          }}
+                          className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold inline-flex items-center gap-1.5 transition-colors shadow"
+                        >
+                          <Plus size={14} /> Add Accompanying Member
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
+                        {guestMembers.map((member, idx) => (
+                          <div key={idx} className="bg-slate-50 p-4 rounded-2xl border border-slate-200 space-y-3 relative group">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                                <span className="w-5 h-5 rounded-full bg-blue-100 text-blue-600 inline-flex items-center justify-center text-[10px] font-black">
+                                  {idx + 1}
+                                </span>
+                                Member #{idx + 1}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setGuestMembers(prev => prev.filter((_, i) => i !== idx));
+                                }}
+                                className="text-slate-400 hover:text-rose-500 p-1 rounded-lg hover:bg-rose-50 transition-colors"
+                              >
+                                <Trash2 size={14} />
+                              </button>
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-[11px] font-bold text-slate-500 block mb-1">Full Name</label>
+                                <input
+                                  type="text"
+                                  value={member.name}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setGuestMembers(prev => prev.map((m, i) => i === idx ? { ...m, name: val } : m));
+                                  }}
+                                  placeholder="e.g. Jane Doe"
+                                  className="w-full bg-white border border-slate-200 h-9 px-3 rounded-lg text-xs font-medium text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+
+                              <div className="grid grid-cols-3 gap-2">
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 block mb-1">Age</label>
+                                  <input
+                                    type="number"
+                                    value={member.age}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setGuestMembers(prev => prev.map((m, i) => i === idx ? { ...m, age: val } : m));
+                                    }}
+                                    placeholder="Age"
+                                    className="w-full bg-white border border-slate-200 h-9 px-2 rounded-lg text-xs font-medium text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 block mb-1">Gender</label>
+                                  <select
+                                    value={member.gender}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setGuestMembers(prev => prev.map((m, i) => i === idx ? { ...m, gender: val } : m));
+                                    }}
+                                    className="w-full bg-white border border-slate-200 h-9 px-1 rounded-lg text-xs font-medium text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                  >
+                                    <option value="Male">Male</option>
+                                    <option value="Female">Female</option>
+                                    <option value="Other">Other</option>
+                                  </select>
+                                </div>
+
+                                <div>
+                                  <label className="text-[11px] font-bold text-slate-500 block mb-1">Relation</label>
+                                  <select
+                                    value={member.relationship}
+                                    onChange={e => {
+                                      const val = e.target.value;
+                                      setGuestMembers(prev => prev.map((m, i) => i === idx ? { ...m, relationship: val } : m));
+                                    }}
+                                    className="w-full bg-white border border-slate-200 h-9 px-1 rounded-lg text-xs font-medium text-slate-800 outline-none focus:ring-2 focus:ring-blue-500"
+                                  >
+                                    <option value="Spouse">Spouse</option>
+                                    <option value="Child">Child</option>
+                                    <option value="Parent">Parent</option>
+                                    <option value="Friend">Friend</option>
+                                    <option value="Colleague">Colleague</option>
+                                    <option value="Other">Other</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {dialogStep === 4 && (
                   <div className="space-y-6">
                     <h3 className="text-lg font-bold text-slate-800 text-center">Confirm Your Details</h3>
                     
@@ -631,6 +881,15 @@ export default function BookingEnginePage() {
                             return `${selectedRooms[roomId].count} x ${rt?.name || 'Room'}`;
                           }).join(', ')}
                         </span>
+
+                        {guestMembers.filter(m => m.name.trim()).length > 0 && (
+                          <>
+                            <span className="text-slate-500 font-medium">Co-Guests:</span>
+                            <span className="text-slate-900 font-semibold text-right text-xs">
+                              {guestMembers.filter(m => m.name.trim()).map(m => `${m.name} (${m.relationship})`).join(', ')}
+                            </span>
+                          </>
+                        )}
                       </div>
                     </div>
 
@@ -673,7 +932,7 @@ export default function BookingEnginePage() {
                   <div />
                 )}
 
-                {dialogStep < 3 ? (
+                {dialogStep < 4 ? (
                   <button 
                     onClick={() => {
                       if (dialogStep === 2 && (!guestName || !guestEmail || !guestPhone)) {

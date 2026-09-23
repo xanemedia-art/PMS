@@ -54,6 +54,11 @@ export async function ensureDbTables() {
       ALTER TABLE bookings ADD COLUMN IF NOT EXISTS amount_paid REAL DEFAULT 0;
       ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT 'cash';
       ALTER TABLE bookings ADD COLUMN IF NOT EXISTS payment_notes TEXT;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS guest_members TEXT;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS check_in_details TEXT;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS self_check_in_token TEXT;
+      ALTER TABLE bookings ADD COLUMN IF NOT EXISTS is_archived BOOLEAN DEFAULT FALSE;
+      UPDATE bookings SET self_check_in_token = md5(random()::text || id::text || clock_timestamp()::text) WHERE self_check_in_token IS NULL;
     `);
 
     // 4. Specifically purge Room 201 under Fyra Hotel as instructed

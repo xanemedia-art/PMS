@@ -94,6 +94,10 @@ export const bookings = pgTable('bookings', {
   amountPaid: real('amount_paid').default(0),
   paymentMethod: text('payment_method').default('cash'), // 'cash' | 'upi' | 'card' | 'bank_transfer' | 'agent_credit' | 'other'
   paymentNotes: text('payment_notes'),
+  guestMembers: text('guest_members'), // JSON array of accompanying members: [{ name, age, gender, relationship }]
+  checkInDetails: text('check_in_details'), // JSON object of completed check-in formalities
+  selfCheckInToken: text('self_check_in_token'), // Unique unguessable UUID for express guest check-in
+  isArchived: boolean('is_archived').default(false), // Flag for historical archival out of live operational queue
   createdAt: timestamp('created_at').defaultNow(),
 });
 

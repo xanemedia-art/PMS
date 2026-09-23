@@ -62,7 +62,7 @@ export default function DashboardPage() {
   const { data: recentBookings = [], isLoading: bookingsLoading } = useQuery({
     queryKey: ['recentBookings'],
     queryFn: async () => {
-      const res = await fetch('/api/bookings', {
+      const res = await fetch('/api/bookings?scope=live', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) throw new Error('Failed to fetch bookings');
@@ -77,7 +77,7 @@ export default function DashboardPage() {
   const { data: allBookings = [], isLoading: allBookingsLoading } = useQuery({
     queryKey: ['dashboardAllBookings'],
     queryFn: async () => {
-      const res = await fetch('/api/bookings', {
+      const res = await fetch('/api/bookings?scope=live', {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) return [];
@@ -339,6 +339,11 @@ export default function DashboardPage() {
                         <p className="text-sm font-semibold text-slate-900">{booking.guestName}</p>
                         <div className="flex items-center gap-2 mt-1">
                           <Badge variant="secondary" className="text-[10px] h-4 px-1.5 uppercase tracking-wider">{booking.status}</Badge>
+                          {(booking as any).selfCheckInCompleted && (
+                            <Badge className="bg-emerald-100 text-emerald-800 border-none text-[9px] h-4 px-1 font-bold inline-flex items-center gap-0.5">
+                              <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" /> Pre-Checked In
+                            </Badge>
+                          )}
                           <p className="text-xs text-slate-500">
                              {new Date(booking.checkInDate).toLocaleDateString()} - {new Date(booking.checkOutDate).toLocaleDateString()}
                           </p>

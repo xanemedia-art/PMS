@@ -39,6 +39,7 @@ import PresentationPage from './pages/PresentationPage';
 import SuperAdminPage from './pages/SuperAdminPage';
 import StaffPage from './pages/StaffPage';
 import TableOrderPage from './pages/TableOrderPage';
+import SelfCheckInPage from './pages/SelfCheckInPage';
 import { AlertTriangle, CreditCard } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -106,6 +107,7 @@ function MainRoutes() {
             !window.location.pathname.startsWith('/guest') && 
             !window.location.pathname.startsWith('/booking') &&
             !window.location.pathname.startsWith('/book') &&
+            !window.location.pathname.startsWith('/checkin') &&
             !window.location.pathname.startsWith('/h/') &&
             !window.location.pathname.startsWith('/table') &&
             !window.location.pathname.startsWith('/super-admin')
@@ -231,6 +233,8 @@ function MainRoutes() {
         <Route path="/table-order" element={<TableOrderPage />} />
         <Route path="/h/:slug/table/:tableNumber" element={<TableOrderPage />} />
         <Route path="/table/:hotelId/:tableNumber" element={<TableOrderPage />} />
+        <Route path="/checkin/:token" element={<SelfCheckInPage />} />
+        <Route path="/h/:slug/checkin/:token" element={<SelfCheckInPage />} />
         <Route path="/pitch" element={<PresentationPage />} />
         <Route path="/super-admin" element={<SuperAdminPage />} />
         

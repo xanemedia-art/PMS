@@ -8,7 +8,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight, User, Users, Coffee, TrendingUp, Star, Download, ReceiptText, FileText, CreditCard, DollarSign } from 'lucide-react';
+import { CalendarDays, BedDouble, CheckCircle2, XCircle, ChevronLeft, ChevronRight, User, Users, Coffee, TrendingUp, Star, Download, ReceiptText, FileText, CreditCard, DollarSign, QrCode, Share2, Copy, Check, ShieldCheck, Printer, Search, Plus, Trash2, ExternalLink } from 'lucide-react';
+import { getQrCodePngUrl, printStandeeCard } from '../utils/qrCode';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 export default function BookingsPage() {
@@ -18,6 +19,12 @@ export default function BookingsPage() {
   const [selectedBooking, setSelectedBooking] = useState<any>(null);
   const [assignRoomBooking, setAssignRoomBooking] = useState<any>(null);
   const [selectedRoomToAssign, setSelectedRoomToAssign] = useState<string>('');
+  const [qrModalBooking, setQrModalBooking] = useState<any>(null);
+  const [copiedQrLink, setCopiedQrLink] = useState(false);
+  // Accounts & Legal Vault Filters
+  const [auditSearch, setAuditSearch] = useState('');
+  const [auditFromDate, setAuditFromDate] = useState('');
+  const [auditToDate, setAuditToDate] = useState('');
 
   // Agent availability sheet state
   const todayStr = new Date().toISOString().split('T')[0];
@@ -87,6 +94,17 @@ export default function BookingsPage() {
     },
     enabled: user?.role === 'agent',
     staleTime: 10000,
+  });
+
+  const { data: auditBookings = [], isLoading: auditLoading } = useQuery({
+    queryKey: ['bookings-audit'],
+    queryFn: async () => {
+      const res = await fetch('/api/bookings?scope=accounts', { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) throw new Error('Failed to fetch accounts audit bookings');
+      return res.json();
+    },
+    enabled: user?.role !== 'agent',
+    staleTime: 30000,
   });
 
   const handleDownloadAgentPdf = async (invoiceId: number) => {
@@ -226,6 +244,7 @@ export default function BookingsPage() {
     roomTypeId: '',
     roomCount: '1',
     roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }],
+    guestMembers: [] as { name: string; age: string; gender: string; relationship: string }[],
     planId: '',
     checkInDate: '',
     checkOutDate: '',
@@ -317,13 +336,17 @@ export default function BookingsPage() {
       }
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['bookings'] });
+      queryClient.invalidateQueries({ queryKey: ['bookings-audit'] });
       queryClient.invalidateQueries({ queryKey: ['dashboardStats'] });
       setIsDialogOpen(false);
       setFormData({
-        guestName: '', guestEmail: '', guestPhone: '', roomTypeId: '', roomCount: '1', roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }], planId: '', checkInDate: '', checkOutDate: '', agentCommission: '', paymentStatus: 'pay_at_checkout', totalEstimatedAmount: '', amountPaid: '', paymentMethod: 'cash', paymentNotes: ''
+        guestName: '', guestEmail: '', guestPhone: '', roomTypeId: '', roomCount: '1', roomConfigs: [{ pax: 1, extraBeddings: 0, notes: '' }], guestMembers: [], planId: '', checkInDate: '', checkOutDate: '', agentCommission: '', paymentStatus: 'pay_at_checkout', totalEstimatedAmount: '', amountPaid: '', paymentMethod: 'cash', paymentNotes: ''
       });
+      if (data?.checkInUrl) {
+        setQrModalBooking(data);
+      }
     },
     onError: (err: any) => alert(err.message)
   });
@@ -551,6 +574,7 @@ export default function BookingsPage() {
                 e.preventDefault();
                 createBookingMutation.mutate({
                   ...formData,
+                  guestMembers: formData.guestMembers.filter(m => m.name.trim() !== ''),
                   roomId: null,
                   roomTypeId: formData.roomTypeId ? parseInt(formData.roomTypeId) : null,
                   roomCount: parseInt(formData.roomCount),
@@ -783,6 +807,115 @@ export default function BookingsPage() {
                   ))}
                 </div>
 
+                {/* Section: Accompanying Members */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <Users className="w-5 h-5 text-indigo-500" />
+                      <h3 className="font-bold text-slate-800">Accompanying Members / Co-Guests (Optional)</h3>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="text-xs font-semibold text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                      onClick={() => {
+                        setFormData(prev => ({
+                          ...prev,
+                          guestMembers: [...prev.guestMembers, { name: '', age: '', gender: 'Male', relationship: 'Spouse' }]
+                        }));
+                      }}
+                    >
+                      <Plus className="w-3.5 h-3.5 mr-1" /> Add Member
+                    </Button>
+                  </div>
+
+                  {formData.guestMembers.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic">No co-guests added. The reservation will be filed under the lead guest only.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {formData.guestMembers.map((m, mIdx) => (
+                        <div key={mIdx} className="bg-slate-50 p-3 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-4 gap-2 items-center">
+                          <Input
+                            placeholder="Co-Guest Name"
+                            value={m.name}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setFormData(prev => ({
+                                ...prev,
+                                guestMembers: prev.guestMembers.map((gm, i) => i === mIdx ? { ...gm, name: val } : gm)
+                              }));
+                            }}
+                            className="bg-white text-xs h-9"
+                          />
+                          <Input
+                            type="number"
+                            placeholder="Age"
+                            value={m.age}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setFormData(prev => ({
+                                ...prev,
+                                guestMembers: prev.guestMembers.map((gm, i) => i === mIdx ? { ...gm, age: val } : gm)
+                              }));
+                            }}
+                            className="bg-white text-xs h-9"
+                          />
+                          <select
+                            value={m.gender}
+                            onChange={e => {
+                              const val = e.target.value;
+                              setFormData(prev => ({
+                                ...prev,
+                                guestMembers: prev.guestMembers.map((gm, i) => i === mIdx ? { ...gm, gender: val } : gm)
+                              }));
+                            }}
+                            className="bg-white border border-slate-200 text-xs h-9 rounded-md px-2"
+                          >
+                            <option value="Male">Male</option>
+                            <option value="Female">Female</option>
+                            <option value="Other">Other</option>
+                          </select>
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={m.relationship}
+                              onChange={e => {
+                                const val = e.target.value;
+                                setFormData(prev => ({
+                                ...prev,
+                                guestMembers: prev.guestMembers.map((gm, i) => i === mIdx ? { ...gm, relationship: val } : gm)
+                              }));
+                              }}
+                              className="bg-white border border-slate-200 text-xs h-9 rounded-md px-2 flex-1"
+                            >
+                              <option value="Spouse">Spouse</option>
+                              <option value="Child">Child</option>
+                              <option value="Parent">Parent</option>
+                              <option value="Friend">Friend</option>
+                              <option value="Colleague">Colleague</option>
+                              <option value="Other">Other</option>
+                            </select>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="text-slate-400 hover:text-rose-500 p-1.5 h-9"
+                              onClick={() => {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  guestMembers: prev.guestMembers.filter((_, i) => i !== mIdx)
+                                }));
+                              }}
+                            >
+                              <Trash2 size={14} />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <div className="flex gap-3 pt-4">
                   <Button type="button" variant="ghost" onClick={() => setIsDialogOpen(false)} className="flex-1 text-slate-400 hover:text-slate-600">Discard</Button>
                   <Button type="submit" disabled={createBookingMutation.isPending} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold h-12 rounded-xl shadow-lg shadow-blue-200">
@@ -804,6 +937,11 @@ export default function BookingsPage() {
           <TabsTrigger value="availability">Room Availability</TabsTrigger>
           {user?.role === 'agent' && <TabsTrigger value="agent-reports">Reports</TabsTrigger>}
           {user?.role !== 'agent' && <TabsTrigger value="guests">Guests</TabsTrigger>}
+          {user?.role !== 'agent' && (
+            <TabsTrigger value="accounts-vault" className="gap-1.5 text-emerald-800 data-[state=active]:bg-emerald-50 data-[state=active]:text-emerald-900 font-bold">
+              <ShieldCheck className="w-4 h-4 text-emerald-600" /> Accounts & Legal Vault
+            </TabsTrigger>
+          )}
         </TabsList>
 
 
@@ -991,7 +1129,14 @@ export default function BookingsPage() {
                         onClick={() => setSelectedBooking(booking)}
                       >
                         <TableCell className="font-medium">
-                          {booking.guestName}
+                          <div className="flex items-center gap-1.5">
+                            <span>{booking.guestName}</span>
+                            {booking.selfCheckInCompleted && (
+                              <Badge className="bg-emerald-100 text-emerald-800 border-none text-[9px] py-0 px-1 font-bold inline-flex items-center gap-0.5">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" /> Pre-Checked In
+                              </Badge>
+                            )}
+                          </div>
                           <div className="text-xs text-slate-500 font-normal">
                             {booking.bookedBy?.role === 'agent' ? `By ${booking.bookedBy?.name || 'Agent'}` : 'By Staff'}
                           </div>
@@ -1046,6 +1191,16 @@ export default function BookingsPage() {
                           )}
                         </TableCell>
                         <TableCell className="text-right space-x-2" onClick={(e) => e.stopPropagation()}>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="text-xs font-semibold border-amber-200 text-amber-800 hover:bg-amber-50 h-8 px-2"
+                            title="Share Express Self Check-In QR or Link"
+                            onClick={() => setQrModalBooking(booking)}
+                          >
+                            <QrCode className="w-3.5 h-3.5 mr-1 text-amber-600" />
+                            QR
+                          </Button>
                           {user?.role !== 'agent' && (
                             <Button
                               variant="ghost"
@@ -1362,6 +1517,103 @@ export default function BookingsPage() {
                         )}
                       </div>
                     )}
+
+                    {/* Accompanying Members in Selected Booking Details */}
+                    {(() => {
+                      let members: any[] = [];
+                      try {
+                        if (Array.isArray(selectedBooking.guestMembers)) members = selectedBooking.guestMembers;
+                        else if (selectedBooking.guestMembers) members = JSON.parse(selectedBooking.guestMembers);
+                      } catch (e) {}
+
+                      if (members.length === 0) return null;
+                      return (
+                        <div className="col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+                          <h4 className="text-xs font-black uppercase text-indigo-700 tracking-wider flex items-center gap-1.5">
+                            <Users size={14} /> Accompanying Members ({members.length})
+                          </h4>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {members.map((m: any, idx: number) => (
+                              <div key={idx} className="bg-white p-2.5 rounded-lg border border-slate-100 text-xs flex justify-between items-center shadow-xs">
+                                <div>
+                                  <p className="font-bold text-slate-800">{m.name}</p>
+                                  <p className="text-[11px] text-slate-500">{m.gender || 'Unknown'}, {m.age ? `${m.age} yrs` : ''}</p>
+                                </div>
+                                <Badge variant="secondary" className="text-[10px] bg-slate-100 text-slate-700 font-semibold">
+                                  {m.relationship || 'Guest'}
+                                </Badge>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Self Check-In Formalities in Selected Booking Details */}
+                    <div className="col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
+                      <div className="flex justify-between items-center">
+                        <h4 className="text-xs font-black uppercase text-slate-700 tracking-wider flex items-center gap-1.5">
+                          <QrCode size={14} className="text-[#C5A880]" /> Express Self Check-In Formalities
+                        </h4>
+                        <div className="flex items-center gap-2">
+                          {selectedBooking.selfCheckInCompleted ? (
+                            <Badge className="bg-emerald-100 text-emerald-800 border-none font-bold text-xs">
+                              <CheckCircle2 size={12} className="mr-1" /> Formalities Verified
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-amber-100 text-amber-800 border-none font-bold text-xs">
+                              Pending Guest Check-In
+                            </Badge>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
+                            onClick={() => setQrModalBooking(selectedBooking)}
+                          >
+                            <QrCode size={12} className="mr-1" /> View / Share QR
+                          </Button>
+                        </div>
+                      </div>
+
+                      {(() => {
+                        let details: any = null;
+                        try {
+                          if (typeof selectedBooking.checkInDetails === 'string') details = JSON.parse(selectedBooking.checkInDetails);
+                          else details = selectedBooking.checkInDetails;
+                        } catch (e) {}
+
+                        if (!details) {
+                          return (
+                            <p className="text-xs text-slate-400 italic">
+                              Guest has not completed digital self check-in yet. Share the QR code or link to complete online.
+                            </p>
+                          );
+                        }
+
+                        return (
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs bg-white p-3 rounded-lg border border-slate-100">
+                            <div>
+                              <span className="text-slate-400 font-semibold block text-[10px] uppercase">ID Proof</span>
+                              <span className="font-bold text-slate-800">{details.idType || 'Aadhaar'}: {details.idNumber || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 font-semibold block text-[10px] uppercase">City / State</span>
+                              <span className="font-bold text-slate-800">{details.city || 'N/A'}, {details.state || 'N/A'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 font-semibold block text-[10px] uppercase">Purpose</span>
+                              <span className="font-bold text-slate-800">{details.purposeOfVisit || 'Leisure'}</span>
+                            </div>
+                            <div>
+                              <span className="text-slate-400 font-semibold block text-[10px] uppercase">Vehicle No.</span>
+                              <span className="font-bold text-slate-800">{details.vehicleNumber || 'None'}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
                     {user?.role !== 'agent' && (
                       <div className="col-span-2 pt-4 border-t flex justify-end">
                         <Button 
@@ -1457,6 +1709,145 @@ export default function BookingsPage() {
                   Confirm Check In
                 </Button>
               </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Express Self Check-In QR & Share Modal */}
+          <Dialog open={!!qrModalBooking} onOpenChange={(open) => {
+            if (!open) {
+              setQrModalBooking(null);
+              setCopiedQrLink(false);
+            }
+          }}>
+            <DialogContent className="sm:max-w-[480px] p-0 border-none shadow-2xl rounded-3xl overflow-hidden bg-slate-950 text-white">
+              <div className="bg-gradient-to-r from-amber-600 to-[#C5A880] p-6 text-white text-center relative">
+                <div className="w-12 h-12 bg-white/20 backdrop-blur-md rounded-2xl flex items-center justify-center mx-auto mb-2 border border-white/30">
+                  <QrCode size={24} className="text-white" />
+                </div>
+                <DialogTitle className="text-xl font-black text-white">Guest Self Check-In</DialogTitle>
+                <DialogDescription className="text-amber-100 text-xs mt-1">
+                  Express pre-arrival digital check-in for {qrModalBooking?.guestName}
+                </DialogDescription>
+              </div>
+
+              <div className="p-6 space-y-5 text-center">
+                {/* Stay Info Card */}
+                <div className="bg-slate-900 rounded-2xl p-4 border border-slate-800 text-left text-xs space-y-1.5 text-slate-300">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-400">Lead Guest:</span>
+                    <span className="font-bold text-white text-sm">{qrModalBooking?.guestName}</span>
+                  </div>
+                  <div className="flex justify-between items-center border-t border-slate-800/80 pt-1.5">
+                    <span className="text-slate-400">Stay Dates:</span>
+                    <span className="font-medium text-slate-200">{qrModalBooking?.checkInDate} to {qrModalBooking?.checkOutDate}</span>
+                  </div>
+                  <div className="flex justify-between items-center border-t border-slate-800/80 pt-1.5">
+                    <span className="text-slate-400">Status:</span>
+                    <span>
+                      {qrModalBooking?.selfCheckInCompleted ? (
+                        <Badge className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                          ✓ Digital Check-In Done
+                        </Badge>
+                      ) : (
+                        <Badge className="bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-bold">
+                          Pending Formalities
+                        </Badge>
+                      )}
+                    </span>
+                  </div>
+                </div>
+
+                {/* QR Code Container */}
+                {(() => {
+                  const checkInPath = qrModalBooking?.checkInUrl || (qrModalBooking?.selfCheckInToken ? `/checkin/${qrModalBooking.selfCheckInToken}` : null);
+                  const fullUrl = checkInPath ? (checkInPath.startsWith('http') ? checkInPath : `${window.location.origin}${checkInPath}`) : '';
+                  
+                  if (!fullUrl) {
+                    return (
+                      <div className="p-6 bg-slate-900 rounded-2xl text-slate-400 text-xs">
+                        Self check-in link not generated for this stay.
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-4">
+                      <div className="bg-white p-4 rounded-2xl inline-block shadow-2xl border border-slate-700">
+                        <img 
+                          src={getQrCodePngUrl(fullUrl, 260)} 
+                          alt="Check-In QR" 
+                          className="w-48 h-48 object-contain mx-auto" 
+                        />
+                      </div>
+
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            navigator.clipboard.writeText(fullUrl);
+                            setCopiedQrLink(true);
+                            setTimeout(() => setCopiedQrLink(false), 2500);
+                          }}
+                          className="flex-1 bg-slate-900 hover:bg-slate-800 text-slate-200 border-slate-700 h-10 text-xs font-bold"
+                        >
+                          {copiedQrLink ? <Check size={14} className="text-emerald-400 mr-1.5" /> : <Copy size={14} className="mr-1.5" />}
+                          {copiedQrLink ? 'Copied to Clipboard' : 'Copy Check-In Link'}
+                        </Button>
+
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            const waText = encodeURIComponent(`Hi ${qrModalBooking?.guestName}, your reservation is confirmed! You can skip the reception line and complete your Express Check-In online here: ${fullUrl}`);
+                            window.open(`https://wa.me/?text=${waText}`, '_blank');
+                          }}
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white h-10 text-xs font-bold shadow-md"
+                        >
+                          <Share2 size={14} className="mr-1.5" /> Share WhatsApp
+                        </Button>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-1 px-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            printStandeeCard(
+                              'Express Guest Check-In',
+                              `Reservation: ${qrModalBooking?.guestName}`,
+                              fullUrl,
+                              'Scan with camera to complete arrival formalities'
+                            );
+                          }}
+                          className="text-xs text-slate-400 hover:text-white"
+                        >
+                          <Printer size={13} className="mr-1.5" /> Print QR Card
+                        </Button>
+
+                        <a
+                          href={fullUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs text-[#C5A880] hover:underline font-semibold inline-flex items-center gap-1"
+                        >
+                          Open Guest Form <ExternalLink size={12} />
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-end">
+                <Button 
+                  variant="ghost" 
+                  size="sm" 
+                  onClick={() => setQrModalBooking(null)}
+                  className="text-slate-400 hover:text-white"
+                >
+                  Close
+                </Button>
+              </div>
             </DialogContent>
           </Dialog>
         </TabsContent>
@@ -1932,6 +2323,288 @@ export default function BookingsPage() {
                           ));
                         })()
                       )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        )}
+
+        {/* Accounts & Legal Department Audit Vault Tab */}
+        {user?.role !== 'agent' && (
+          <TabsContent value="accounts-vault" className="space-y-6 animate-in fade-in duration-300">
+            <Card className="border border-slate-200 shadow-sm overflow-hidden bg-gradient-to-br from-emerald-50/20 via-white to-slate-50">
+              <CardHeader className="pb-4 border-b border-slate-100">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                  <div className="space-y-1">
+                    <CardTitle className="text-xl font-black text-slate-900 flex items-center gap-2">
+                      <ShieldCheck className="w-6 h-6 text-emerald-600" />
+                      <span>Accounts & Legal Department Audit Vault</span>
+                    </CardTitle>
+                    <CardDescription className="text-xs text-slate-500 max-w-2xl">
+                      Statutory compliance archive preserving all past reservations, tax breakdowns, official invoices, and government ID verifications. Operational dashboards remain live and uncluttered.
+                    </CardDescription>
+                  </div>
+
+                  <Button
+                    onClick={() => {
+                      if (!auditBookings.length) return alert('No records to export');
+                      // Construct CSV
+                      const headers = [
+                        'Booking ID',
+                        'Guest Name',
+                        'Email',
+                        'Phone',
+                        'Check-In Date',
+                        'Check-Out Date',
+                        'Room / Type',
+                        'Status',
+                        'Est. Total (INR)',
+                        'Amount Paid (INR)',
+                        'Payment Status',
+                        'Payment Method',
+                        'Co-Guests Count',
+                        'Co-Guests Details',
+                        'Self Check-In Status',
+                        'ID Type',
+                        'ID Number',
+                        'City/State',
+                        'Purpose'
+                      ];
+
+                      const csvRows = [headers.join(',')];
+
+                      auditBookings.forEach((b: any) => {
+                        let members: any[] = [];
+                        try {
+                          if (Array.isArray(b.guestMembers)) members = b.guestMembers;
+                          else if (b.guestMembers) members = JSON.parse(b.guestMembers);
+                        } catch (e) {}
+
+                        let details: any = null;
+                        try {
+                          if (typeof b.checkInDetails === 'string') details = JSON.parse(b.checkInDetails);
+                          else details = b.checkInDetails;
+                        } catch (e) {}
+
+                        const memberSummary = members.map(m => `${m.name} (${m.relationship || 'Guest'})`).join('; ');
+
+                        const row = [
+                          `"${b.id}"`,
+                          `"${(b.guestName || '').replace(/"/g, '""')}"`,
+                          `"${(b.guestEmail || '').replace(/"/g, '""')}"`,
+                          `"${(b.guestPhone || '').replace(/"/g, '""')}"`,
+                          `"${b.checkInDate || ''}"`,
+                          `"${b.checkOutDate || ''}"`,
+                          `"${getRoomDisplay(b)}"`,
+                          `"${b.status || ''}"`,
+                          `"${b.totalEstimatedAmount || 0}"`,
+                          `"${b.amountPaid || 0}"`,
+                          `"${b.paymentStatus || ''}"`,
+                          `"${b.paymentMethod || 'cash'}"`,
+                          `"${members.length}"`,
+                          `"${memberSummary.replace(/"/g, '""')}"`,
+                          `"${b.selfCheckInCompleted ? 'Completed' : 'Pending'}"`,
+                          `"${(details?.idType || '').replace(/"/g, '""')}"`,
+                          `"${(details?.idNumber || '').replace(/"/g, '""')}"`,
+                          `"${(`${details?.city || ''} ${details?.state || ''}`).trim().replace(/"/g, '""')}"`,
+                          `"${(details?.purposeOfVisit || '').replace(/"/g, '""')}"`
+                        ];
+                        csvRows.push(row.join(','));
+                      });
+
+                      const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+                      const url = URL.createObjectURL(blob);
+                      const link = document.createElement('a');
+                      link.setAttribute('href', url);
+                      link.setAttribute('download', `Accounts_Legal_Audit_Records_${new Date().toISOString().split('T')[0]}.csv`);
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs h-10 px-4 rounded-xl shadow-md flex items-center gap-2 shrink-0"
+                  >
+                    <Download size={14} /> Export Audit CSV
+                  </Button>
+                </div>
+
+                {/* Filters */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                    <Input
+                      placeholder="Search by Guest, Phone, Ref..."
+                      value={auditSearch}
+                      onChange={e => setAuditSearch(e.target.value)}
+                      className="pl-9 bg-white text-xs h-9 rounded-xl border-slate-200"
+                    />
+                  </div>
+
+                  <div>
+                    <Input
+                      type="date"
+                      value={auditFromDate}
+                      onChange={e => setAuditFromDate(e.target.value)}
+                      placeholder="From Date"
+                      className="bg-white text-xs h-9 rounded-xl border-slate-200"
+                    />
+                  </div>
+
+                  <div>
+                    <Input
+                      type="date"
+                      value={auditToDate}
+                      onChange={e => setAuditToDate(e.target.value)}
+                      placeholder="To Date"
+                      className="bg-white text-xs h-9 rounded-xl border-slate-200"
+                    />
+                  </div>
+                </div>
+              </CardHeader>
+
+              <CardContent className="p-0">
+                <div className="overflow-x-auto w-full">
+                  <Table>
+                    <TableHeader className="bg-slate-50/80">
+                      <TableRow>
+                        <TableHead className="pl-6">Audit ID / Guest</TableHead>
+                        <TableHead>Co-Guests</TableHead>
+                        <TableHead>Dates</TableHead>
+                        <TableHead>Room / Type</TableHead>
+                        <TableHead>Settlement</TableHead>
+                        <TableHead>Legal ID Formalities</TableHead>
+                        <TableHead className="text-right pr-6">Audit Action</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {auditLoading ? (
+                        <TableRow>
+                          <TableCell colSpan={7} className="text-center py-10 text-slate-400 animate-pulse italic">
+                            Loading accounts & legal compliance records...
+                          </TableCell>
+                        </TableRow>
+                      ) : (() => {
+                        const filtered = auditBookings.filter((b: any) => {
+                          if (auditSearch) {
+                            const q = auditSearch.toLowerCase();
+                            const matchName = b.guestName?.toLowerCase().includes(q);
+                            const matchPhone = b.guestPhone?.toLowerCase().includes(q);
+                            const matchEmail = b.guestEmail?.toLowerCase().includes(q);
+                            const matchId = b.id?.toString().includes(q);
+                            if (!matchName && !matchPhone && !matchEmail && !matchId) return false;
+                          }
+                          if (auditFromDate && b.checkInDate < auditFromDate) return false;
+                          if (auditToDate && b.checkOutDate > auditToDate) return false;
+                          return true;
+                        });
+
+                        if (filtered.length === 0) {
+                          return (
+                            <TableRow>
+                              <TableCell colSpan={7} className="text-center py-10 text-slate-400 italic">
+                                No records found matching the compliance filter.
+                              </TableCell>
+                            </TableRow>
+                          );
+                        }
+
+                        return filtered.map((b: any) => {
+                          let members: any[] = [];
+                          try {
+                            if (Array.isArray(b.guestMembers)) members = b.guestMembers;
+                            else if (b.guestMembers) members = JSON.parse(b.guestMembers);
+                          } catch (e) {}
+
+                          let details: any = null;
+                          try {
+                            if (typeof b.checkInDetails === 'string') details = JSON.parse(b.checkInDetails);
+                            else details = b.checkInDetails;
+                          } catch (e) {}
+
+                          return (
+                            <TableRow key={b.id} className="hover:bg-slate-50/70 cursor-pointer" onClick={() => setSelectedBooking(b)}>
+                              <TableCell className="pl-6">
+                                <div className="font-bold text-slate-800 flex items-center gap-1.5">
+                                  <span>{b.guestName}</span>
+                                  <span className="text-[10px] font-mono text-slate-400">#{b.id}</span>
+                                </div>
+                                <div className="text-xs text-slate-500 mt-0.5">{b.guestPhone || b.guestEmail || 'No contact'}</div>
+                              </TableCell>
+
+                              <TableCell>
+                                {members.length > 0 ? (
+                                  <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-xs">
+                                    <Users size={12} className="mr-1" /> {members.length} Member{members.length === 1 ? '' : 's'}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-xs text-slate-400">Solo</span>
+                                )}
+                              </TableCell>
+
+                              <TableCell className="text-xs text-slate-600 font-medium">
+                                <div>{new Date(b.checkInDate).toLocaleDateString('en-IN')}</div>
+                                <div className="text-[11px] text-slate-400">to {new Date(b.checkOutDate).toLocaleDateString('en-IN')}</div>
+                              </TableCell>
+
+                              <TableCell className="text-xs font-semibold text-slate-700">
+                                {getRoomDisplay(b)}
+                              </TableCell>
+
+                              <TableCell>
+                                <div className="font-bold text-slate-900 text-xs">
+                                  ₹{Number(b.totalEstimatedAmount || b.amountPaid || 0).toLocaleString('en-IN')}
+                                </div>
+                                <Badge className={`text-[10px] border-none font-bold mt-0.5 ${
+                                  b.paymentStatus === 'paid' ? 'bg-emerald-100 text-emerald-800' :
+                                  b.paymentStatus === 'partial' ? 'bg-amber-100 text-amber-800' :
+                                  'bg-slate-100 text-slate-700'
+                                }`}>
+                                  {b.paymentStatus ? b.paymentStatus.replace('_', ' ') : 'Pending'}
+                                </Badge>
+                              </TableCell>
+
+                              <TableCell>
+                                {b.selfCheckInCompleted && details ? (
+                                  <div className="text-xs">
+                                    <div className="font-semibold text-emerald-700 flex items-center gap-1">
+                                      <CheckCircle2 size={12} /> {details.idType || 'Aadhaar'}: {details.idNumber || 'Verified'}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400 truncate max-w-[150px]">
+                                      {details.city || 'Declared'}, {details.state || ''}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <Badge variant="outline" className="text-[10px] text-slate-400 border-slate-200">
+                                    Manual / Reception Check-in
+                                  </Badge>
+                                )}
+                              </TableCell>
+
+                              <TableCell className="text-right pr-6" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 text-xs border-slate-200 hover:bg-slate-100"
+                                    onClick={() => setSelectedBooking(b)}
+                                  >
+                                    View Audit
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8 text-xs border-amber-200 text-amber-800 hover:bg-amber-50"
+                                    onClick={() => setQrModalBooking(b)}
+                                  >
+                                    <QrCode size={12} className="mr-1" /> QR
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          );
+                        });
+                      })()}
                     </TableBody>
                   </Table>
                 </div>

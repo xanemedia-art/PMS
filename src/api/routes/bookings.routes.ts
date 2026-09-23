@@ -1,7 +1,8 @@
 import express from 'express';
+import crypto from 'crypto';
 import { db } from '../../db/index.js';
 import { bookings, rooms, housekeepingTasks, users, plans, invoices, restaurantOrders, guestChats, hotels, roomTypes, agentRoomPrices } from '../../db/schema.js';
-import { eq, and, gte, lte, lt, gt, ne } from 'drizzle-orm';
+import { eq, and, gte, lte, lt, gt, ne, or, ilike } from 'drizzle-orm';
 import { authenticateToken, AuthRequest, requireRole } from '../middleware/auth.middleware.js';
 import { sendEmail, getBookingConfirmationHtml, getCheckInConfirmationHtml, getCheckOutConfirmationHtml, getBookingCancellationHtml, getBookingStatusConfirmedHtml, getAdminBookingAlertHtml } from '../utils/email.js';
 
@@ -9,16 +10,33 @@ const router = express.Router();
 
 router.use(authenticateToken);
 
-// Get all bookings for the tenant's hotel
+// Get bookings for the tenant's hotel (supports live operational feed vs accounts compliance archive)
 router.get('/', async (req: AuthRequest, res) => {
   try {
     const hotelId = req.user!.hotelId;
     const userRole = req.user!.role;
     const userId = req.user!.userId;
+    const { scope, search, startDate, endDate, paymentStatus } = req.query;
 
-    // Fetch all bookings for the hotel so availability can be calculated accurately
-    const queryConditions = eq(bookings.hotelId, hotelId);
+    const today = new Date().toISOString().split('T')[0];
 
+    // Background maintenance: auto-archive past checked-out bookings
+    try {
+      await db.update(bookings)
+        .set({ isArchived: true })
+        .where(
+          and(
+            eq(bookings.hotelId, hotelId),
+            eq(bookings.isArchived, false),
+            lt(bookings.checkOutDate, today),
+            eq(bookings.status, 'checked_out')
+          )
+        );
+    } catch {
+      // ignore background maintenance error
+    }
+
+    // Base query
     const allBookings = await db.select({
       id: bookings.id,
       hotelId: bookings.hotelId,
@@ -42,6 +60,10 @@ router.get('/', async (req: AuthRequest, res) => {
       amountPaid: bookings.amountPaid,
       paymentMethod: bookings.paymentMethod,
       paymentNotes: bookings.paymentNotes,
+      guestMembers: bookings.guestMembers,
+      checkInDetails: bookings.checkInDetails,
+      selfCheckInToken: bookings.selfCheckInToken,
+      isArchived: bookings.isArchived,
       createdAt: bookings.createdAt,
       bookedBy: {
         name: users.name,
@@ -56,10 +78,54 @@ router.get('/', async (req: AuthRequest, res) => {
     .leftJoin(users, eq(bookings.bookedById, users.id))
     .leftJoin(rooms, eq(bookings.roomId, rooms.id))
     .leftJoin(plans, eq(bookings.planId, plans.id))
-    .where(queryConditions);
+    .where(eq(bookings.hotelId, hotelId));
+
+    // Scope Filtering:
+    // If scope === 'accounts': return all records (permanent historical audit vault) with optional filters
+    // If scope === 'live' (or default): strictly return LIVE operational data only
+    let filteredBookings = allBookings;
+
+    if (scope === 'accounts' || scope === 'archive') {
+      if (search && typeof search === 'string') {
+        const q = search.toLowerCase();
+        filteredBookings = filteredBookings.filter(b => 
+          (b.guestName && b.guestName.toLowerCase().includes(q)) ||
+          (b.guestPhone && b.guestPhone.includes(q)) ||
+          (b.id.toString() === q)
+        );
+      }
+      if (startDate && typeof startDate === 'string') {
+        filteredBookings = filteredBookings.filter(b => b.checkInDate >= startDate);
+      }
+      if (endDate && typeof endDate === 'string') {
+        filteredBookings = filteredBookings.filter(b => b.checkOutDate <= endDate);
+      }
+      if (paymentStatus && typeof paymentStatus === 'string') {
+        filteredBookings = filteredBookings.filter(b => b.paymentStatus === paymentStatus);
+      }
+    } else {
+      // LIVE OPERATIONAL SCOPE:
+      // Keep only active in-house guests, today's arrivals/departures, and upcoming stays
+      // Automatically prunes completed past check-outs and old cancelled records
+      filteredBookings = filteredBookings.filter(b => {
+        // In-house guests are always live
+        if (b.status === 'checked_in') return true;
+
+        // Today's departures are live
+        if (b.checkOutDate === today) return true;
+
+        // Upcoming or current active reservations
+        if (b.checkOutDate >= today && (b.status === 'confirmed' || b.status === 'pending')) {
+          return true;
+        }
+
+        // Everything else (past check-outs, past cancelled, etc.) is archived out of live feed
+        return false;
+      });
+    }
     
     // Obscure sensitive data for agents looking at other people's bookings
-    const sanitizedBookings = allBookings.map(b => {
+    const sanitizedBookings = filteredBookings.map(b => {
       if (userRole === 'agent' && b.bookedById !== userId) {
         return {
           ...b,
@@ -87,8 +153,13 @@ router.post('/', async (req: AuthRequest, res) => {
     const { 
       roomId, roomTypeId, roomCount, roomConfigs, planId, 
       guestName, guestEmail, guestPhone, checkInDate, checkOutDate, 
-      agentCommission, paymentStatus, totalEstimatedAmount, amountPaid, paymentMethod, paymentNotes 
+      agentCommission, paymentStatus, totalEstimatedAmount, amountPaid, paymentMethod, paymentNotes,
+      guestMembers
     } = req.body;
+
+    const guestMembersJson = guestMembers 
+      ? (typeof guestMembers === 'string' ? guestMembers : JSON.stringify(guestMembers)) 
+      : null;
 
     const normalizedCheckIn = new Date(checkInDate).toISOString().split('T')[0];
     const normalizedCheckOut = new Date(checkOutDate).toISOString().split('T')[0];
@@ -208,6 +279,8 @@ router.post('/', async (req: AuthRequest, res) => {
           amountPaid: amountPaid ? parseFloat(amountPaid) : 0,
           paymentMethod: paymentMethod || null,
           paymentNotes: paymentNotes || null,
+          guestMembers: guestMembersJson,
+          selfCheckInToken: crypto.randomUUID(),
           status: 'pending'
        });
     }
@@ -287,7 +360,10 @@ router.post('/', async (req: AuthRequest, res) => {
       })();
     }
 
-    res.json(newBookings[0]);
+    res.json({
+      ...newBookings[0],
+      checkInUrl: newBookings[0].selfCheckInToken ? `/checkin/${newBookings[0].selfCheckInToken}` : null
+    });
   } catch (error) {
     console.error('Create booking error:', error);
     res.status(500).json({ error: 'Failed to create booking' });
