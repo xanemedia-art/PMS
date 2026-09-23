@@ -104,7 +104,10 @@ function MainRoutes() {
           if (
             window.location.pathname !== '/login' && 
             !window.location.pathname.startsWith('/guest') && 
-            !window.location.pathname.startsWith('/booking/') &&
+            !window.location.pathname.startsWith('/booking') &&
+            !window.location.pathname.startsWith('/book') &&
+            !window.location.pathname.startsWith('/h/') &&
+            !window.location.pathname.startsWith('/table') &&
             !window.location.pathname.startsWith('/super-admin')
           ) {
             window.location.href = '/login';
@@ -210,8 +213,12 @@ function MainRoutes() {
     <div className="relative min-h-screen">
       <Routes>
         <Route path="/" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LandingPage />} />
+        <Route path="/book" element={<BookingEnginePage />} />
         <Route path="/book/:hotelId" element={<BookingEnginePage />} />
+        <Route path="/booking" element={<BookingEnginePage />} />
+        <Route path="/booking/:hotelId" element={<BookingEnginePage />} />
         <Route path="/h/:slug/book" element={<BookingEnginePage />} />
+        <Route path="/h/:slug/booking" element={<BookingEnginePage />} />
         <Route path="/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
         <Route path="/h/:slug/login" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
         <Route path="/signup" element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <SignupPage />} />

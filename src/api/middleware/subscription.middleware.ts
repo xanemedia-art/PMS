@@ -4,6 +4,13 @@ import { db } from '../../db/index.js';
 import { hotels } from '../../db/schema.js';
 import { eq } from 'drizzle-orm';
 
+const subscriptionCache = new Map<number, { hotel: any; expiresAt: number }>();
+
+export function invalidateSubscriptionCache(hotelId?: number) {
+  if (hotelId) subscriptionCache.delete(hotelId);
+  else subscriptionCache.clear();
+}
+
 export const checkSubscription = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
     // If no user context or if it's a super-admin, bypass subscription validation
@@ -32,9 +39,18 @@ export const checkSubscription = async (req: AuthRequest, res: Response, next: N
       return next();
     }
 
-    // Fetch active hotel billing status
-    const hotelResult = await db.select().from(hotels).where(eq(hotels.id, hotelId)).limit(1);
-    const hotel = hotelResult[0];
+    // Check memory cache first (60-second TTL to avoid 350ms DB roundtrip on every click)
+    let hotel: any = null;
+    const cached = subscriptionCache.get(hotelId);
+    if (cached && Date.now() < cached.expiresAt) {
+      hotel = cached.hotel;
+    } else {
+      const hotelResult = await db.select().from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+      hotel = hotelResult[0];
+      if (hotel) {
+        subscriptionCache.set(hotelId, { hotel, expiresAt: Date.now() + 60_000 });
+      }
+    }
 
     if (!hotel) {
       res.status(404).json({ error: 'Hotel context not found' });

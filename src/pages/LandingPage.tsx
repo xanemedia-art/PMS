@@ -84,7 +84,7 @@ export default function LandingPage() {
       title: "Guest Booking Engine",
       description: "Book a room directly. Review real-time room availability, select standard/meal plans, and confirm reservations instantly.",
       cta: "Launch Booking Engine",
-      link: selectedHotelId ? `/book/${selectedHotelId}` : '#',
+      link: selectedHotelId ? `/book/${selectedHotelId}` : '/book',
       isDynamic: true,
       color: "from-slate-900 to-slate-950",
       borderColor: "border-slate-800 hover:border-slate-700"
@@ -259,7 +259,7 @@ export default function LandingPage() {
                     </Button>
                   ) : (
                     <Link 
-                      to={portal.isDynamic ? `/book/${selectedHotelId}` : portal.link} 
+                      to={portal.isDynamic ? (selectedHotelId ? `/book/${selectedHotelId}` : '/book') : portal.link} 
                       className="w-full"
                     >
                       <Button 

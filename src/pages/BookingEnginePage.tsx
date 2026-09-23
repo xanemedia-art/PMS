@@ -52,12 +52,17 @@ export default function BookingEnginePage() {
     fetch('/api/public/hotels')
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data)) {
+        if (Array.isArray(data) && data.length > 0) {
           setProperties(data);
+          // If no hotelId or slug is specified in URL, auto-select the first property
+          if (!hotelId && !slug) {
+            setResolvedHotelId(data[0].id.toString());
+            setSelectedPropertyId(data[0].id);
+          }
         }
       })
       .catch(err => console.error("Failed to fetch hotels", err));
-  }, []);
+  }, [hotelId, slug]);
 
   // Resolve hotel ID by slug or ID
   useEffect(() => {
@@ -748,7 +753,11 @@ export default function BookingEnginePage() {
                   {properties.map((prop) => (
                     <button
                       key={prop.id}
-                      onClick={() => navigate(`/book/${prop.id}`)}
+                      onClick={() => {
+                        setResolvedHotelId(prop.id.toString());
+                        setSelectedPropertyId(prop.id);
+                        navigate(`/book/${prop.id}`);
+                      }}
                       className={`relative py-4 px-2 rounded-2xl font-black text-xs transition-all duration-300 border-2 ${
                         selectedPropertyId === prop.id 
                           ? 'bg-slate-900 text-white border-slate-900 shadow-xl shadow-slate-200' 

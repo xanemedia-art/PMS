@@ -32,20 +32,34 @@ if (process.env.DB_DIRECT_IPV6) {
     username: 'postgres',
     password: parsedPassword,
     ssl: { rejectUnauthorized: false },
-    max: 1,
-    idle_timeout: 20,
-    connect_timeout: 10,
+    max: 10,
+    prepare: false, // Recommended by Supabase for transaction pooler (port 6543)
+    idle_timeout: 60,
+    connect_timeout: 15,
   } as any);
   console.log(`Database connected via direct IPv6 configuration (${process.env.DB_DIRECT_IPV6})`);
 } else {
   queryClient = postgres(connectionString || '', {
     ssl: { rejectUnauthorized: false }, // More compatible with various cloud providers
-    max: 1, 
-    idle_timeout: 20,
-    connect_timeout: 10,
+    max: 10,
+    prepare: false, // Recommended by Supabase for transaction pooler (port 6543)
+    idle_timeout: 60,
+    connect_timeout: 15,
   });
 }
 
+// Background keep-alive to keep connection warm and avoid 3.8s cold handshake
+setInterval(async () => {
+  try {
+    if (queryClient) {
+      await queryClient`SELECT 1`;
+    }
+  } catch {
+    // Keep-alive error caught quietly
+  }
+}, 25000);
+
 export const db = drizzle(queryClient, { schema });
+
 
 

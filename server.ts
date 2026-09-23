@@ -63,7 +63,6 @@ export async function createApp() {
   app.use(cors());
   app.use(express.json());
   app.use('/uploads', express.static(uploadDir));
-  app.use(checkSubscription);
 
   // File Upload API (Protected: Requires Authenticated Hotel User, Strict Image Validation)
   const ALLOWED_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.gif'];
@@ -118,10 +117,14 @@ export async function createApp() {
     res.json({ status: 'ok', message: 'Xane PMS API is running' });
   });
 
+  // Public & Autonomous API Routes
+  app.use('/api/public', publicRoutes);
+  app.use('/api/guest', guestRoutes);
+  app.use('/api/super-admin', superAdminRoutes);
   app.use('/api/auth', authRoutes);
   app.use('/api/subscription', subscriptionRoutes);
 
-  // Apply subscription check middleware for all PMS routes
+  // Apply subscription check middleware for protected PMS tenant routes
   app.use(checkSubscription);
 
   app.use('/api/bookings', bookingsRoutes);
@@ -132,10 +135,7 @@ export async function createApp() {
   app.use('/api/plans', plansRoutes);
   app.use('/api/expenses', expensesRoutes);
   app.use('/api/settings', settingsRoutes);
-  app.use('/api/public', publicRoutes);
-  app.use('/api/guest', guestRoutes);
   app.use('/api/restaurant', restaurantRoutes);
-  app.use('/api/super-admin', superAdminRoutes);
   app.use('/api/billing', billingRoutes);
   app.use('/api/notifications', notificationsRoutes);
   app.use('/api/staff', staffRoutes);

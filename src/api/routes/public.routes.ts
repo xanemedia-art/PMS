@@ -6,14 +6,40 @@ import { sendEmail, getBookingConfirmationHtml } from '../utils/email.js';
 
 const router = express.Router();
 
+// In-memory caching for public endpoints to shield remote database round-trips
+let hotelsCache: { data: any; expiry: number } | null = null;
+const hotelDetailCache = new Map<number, { data: any; expiry: number }>();
+const hotelSlugCache = new Map<string, { data: any; expiry: number }>();
+const availabilityCache = new Map<string, { data: any; expiry: number }>();
+
+export const clearPublicAvailabilityCache = (hotelId?: number) => {
+  if (hotelId) {
+    for (const key of availabilityCache.keys()) {
+      if (key.startsWith(`${hotelId}:`)) {
+        availabilityCache.delete(key);
+      }
+    }
+  } else {
+    availabilityCache.clear();
+  }
+};
+
 // GET /api/public/hotels
 router.get('/hotels', async (req, res) => {
   try {
+    const now = Date.now();
+    if (hotelsCache && hotelsCache.expiry > now) {
+      return res.json(hotelsCache.data);
+    }
+
     const allHotels = await db.select({
       id: hotels.id,
       name: hotels.name,
-      address: hotels.address
+      address: hotels.address,
+      slug: hotels.slug
     }).from(hotels);
+
+    hotelsCache = { data: allHotels, expiry: now + 60000 }; // 60s cache
     res.json(allHotels);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch properties' });
@@ -29,29 +55,39 @@ router.get('/hotel/:hotelId', async (req, res) => {
       return;
     }
 
-    const hotel = await db.select({
-      id: hotels.id,
-      name: hotels.name,
-      address: hotels.address,
-      slug: hotels.slug,
-      gstin: hotels.gstin,
-      billingStateName: hotels.billingStateName,
-      billingStateCode: hotels.billingStateCode,
-      roomGstRate: hotels.roomGstRate,
-      foodGstRate: hotels.foodGstRate,
-    }).from(hotels).where(eq(hotels.id, hotelId)).limit(1);
+    const now = Date.now();
+    const cached = hotelDetailCache.get(hotelId);
+    if (cached && cached.expiry > now) {
+      return res.json(cached.data);
+    }
+
+    const [hotel, hotelPlans] = await Promise.all([
+      db.select({
+        id: hotels.id,
+        name: hotels.name,
+        address: hotels.address,
+        slug: hotels.slug,
+        gstin: hotels.gstin,
+        billingStateName: hotels.billingStateName,
+        billingStateCode: hotels.billingStateCode,
+        roomGstRate: hotels.roomGstRate,
+        foodGstRate: hotels.foodGstRate,
+      }).from(hotels).where(eq(hotels.id, hotelId)).limit(1),
+      db.select().from(plans).where(eq(plans.hotelId, hotelId))
+    ]);
 
     if (!hotel || hotel.length === 0) {
       res.status(404).json({ error: 'Hotel not found' });
       return;
     }
 
-    const hotelPlans = await db.select().from(plans).where(eq(plans.hotelId, hotelId));
-
-    res.json({
+    const result = {
       hotel: hotel[0],
       plans: hotelPlans
-    });
+    };
+
+    hotelDetailCache.set(hotelId, { data: result, expiry: now + 60000 });
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch hotel data' });
   }
@@ -64,6 +100,12 @@ router.get('/hotel/s/:slug', async (req, res) => {
     if (!slug) {
       res.status(400).json({ error: 'Slug parameter is required' });
       return;
+    }
+
+    const now = Date.now();
+    const cached = hotelSlugCache.get(slug);
+    if (cached && cached.expiry > now) {
+      return res.json(cached.data);
     }
 
     const hotel = await db.select({
@@ -86,10 +128,13 @@ router.get('/hotel/s/:slug', async (req, res) => {
     const hotelId = hotel[0].id;
     const hotelPlans = await db.select().from(plans).where(eq(plans.hotelId, hotelId));
 
-    res.json({
+    const result = {
       hotel: hotel[0],
       plans: hotelPlans
-    });
+    };
+
+    hotelSlugCache.set(slug, { data: result, expiry: now + 60000 });
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch hotel data by slug' });
   }
@@ -108,30 +153,32 @@ router.get('/hotel/:hotelId/availability', async (req, res) => {
 
     const normalizedCheckIn = new Date(checkInDate as string).toISOString().split('T')[0];
     const normalizedCheckOut = new Date(checkOutDate as string).toISOString().split('T')[0];
+    const cacheKey = `${hotelId}:${normalizedCheckIn}:${normalizedCheckOut}:${guests || ''}`;
 
-    // Fetch all room types for the hotel
-    const allRoomTypes = await db.select().from(roomTypes).where(eq(roomTypes.hotelId, hotelId));
-    
-    // Fetch all plans for the hotel
-    const allPlans = await db.select().from(plans).where(eq(plans.hotelId, hotelId));
+    const now = Date.now();
+    const cached = availabilityCache.get(cacheKey);
+    if (cached && cached.expiry > now) {
+      return res.json(cached.data);
+    }
 
-    // Fetch all rooms for the hotel
-    const allRooms = await db.select().from(rooms).where(eq(rooms.hotelId, hotelId));
-
-    // Fetch overlapping bookings
-    const overlappingBookingsAll = await db.select({
-      bookings: bookings,
-      rooms: rooms
-    }).from(bookings)
-      .leftJoin(rooms, eq(bookings.roomId, rooms.id))
-      .where(
-        and(
-          eq(bookings.hotelId, hotelId),
-          inArray(bookings.status, ['confirmed', 'checked_in']),
-          lt(bookings.checkInDate, normalizedCheckOut),
-          gt(bookings.checkOutDate, normalizedCheckIn)
+    // Parallel fetch: roomTypes, rooms, and overlappingBookings concurrently
+    const [allRoomTypes, allRooms, overlappingBookingsAll] = await Promise.all([
+      db.select().from(roomTypes).where(eq(roomTypes.hotelId, hotelId)),
+      db.select().from(rooms).where(eq(rooms.hotelId, hotelId)),
+      db.select({
+        bookings: bookings,
+        rooms: rooms
+      }).from(bookings)
+        .leftJoin(rooms, eq(bookings.roomId, rooms.id))
+        .where(
+          and(
+            eq(bookings.hotelId, hotelId),
+            inArray(bookings.status, ['confirmed', 'checked_in']),
+            lt(bookings.checkInDate, normalizedCheckOut),
+            gt(bookings.checkOutDate, normalizedCheckIn)
+          )
         )
-      );
+    ]);
 
     // Calculate availability per room type
     const availableRoomTypes = allRoomTypes.map(rt => {
@@ -188,6 +235,7 @@ router.get('/hotel/:hotelId/availability', async (req, res) => {
       amenities: rt.amenities ? JSON.parse(rt.amenities) : []
     }));
 
+    availabilityCache.set(cacheKey, { data: options, expiry: now + 30000 }); // 30s cache
     res.json(options);
   } catch (error) {
     console.error('Availability check error:', error);
@@ -287,6 +335,7 @@ router.post('/hotel/:hotelId/book', async (req, res) => {
     }
 
     const newBookings = await db.insert(bookings).values(valuesToInsert).returning();
+    clearPublicAvailabilityCache(hotelId);
 
     // Send email notifications asynchronously
     if (newBookings.length > 0) {
